@@ -1,0 +1,127 @@
+services:
+  kafka:
+    # Используем версию из .env (с дефолтом 4.0)
+    image: bitnamilegacy/kafka:${KAFKA_VERSION:-4.0}
+
+    # Имя контейнера из .env (с дефолтом)
+    container_name: ${KAFKA_CONTAINER_NAME:-kafka-kraft}
+
+    # Проброс портов: [порт на хосте]:[порт в контейнере]
+    ports:
+      - '${KAFKA_EXTERNAL_PORT:-9092}:9092'
+
+    environment:
+      # ========== РЕЖИМ РАБОТЫ ==========
+      # Включаем KRaft-режим (отключаем ZooKeeper)
+      - KAFKA_ENABLE_KRAFT=yes
+
+      # ID кластера для формирования Raft-кворума
+      - KAFKA_KRAFT_CLUSTER_ID=${KAFKA_CLUSTER_ID:-AAAAAAAAAAAAAAAAAAAAAQ}
+
+      # Роли ноды:
+      # - controller: участвует в выборах и хранит метаданные (как ZooKeeper)
+      # - broker: обрабатывает сообщения (основная работа Kafka)
+      # В проде разделяют, но для разработки объединяем
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+
+      # Кворум для выборов: [id ноды]@[хост]:[порт]
+      # Id=1 - это наш единственный контроллер
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@kafka:${KAFKA_CONTROLLER_PORT:-9093}
+
+      # ========== НАСТРОЙКА СЛУШАТЕЛЕЙ ==========
+      # Какие порты слушает Kafka внутри контейнера
+      # INTERNAL: общение между брокерами
+      # CONTROLLER: Raft-коммуникация
+      # EXTERNAL: для подключения клиентов (твой Go-код)
+      - KAFKA_CFG_LISTENERS=INTERNAL://:${KAFKA_INTERNAL_PORT:-9091},CONTROLLER://:${KAFKA_CONTROLLER_PORT:-9093},EXTERNAL://:${KAFKA_EXTERNAL_PORT:-9092}
+
+      # Какие адреса сообщать клиентам (важно для проброса портов)
+      # INTERNAL: внутри Docker-сети используем имя контейнера
+      # EXTERNAL: снаружи используем localhost (твоя машина)
+      - KAFKA_CFG_ADVERTISED_LISTENERS=INTERNAL://kafka:${KAFKA_INTERNAL_PORT:-9091},EXTERNAL://${KAFKA_EXTERNAL_HOST:-localhost}:${KAFKA_EXTERNAL_PORT:-9092}
+
+      # Соответствие протоколов для каждого слушателя
+      # PLAINTEXT = без шифрования (для разработки)
+      # В проде: SSL, SASL_PLAINTEXT и т.д.
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+
+      # Какой слушатель использовать для общения между брокерами
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=INTERNAL
+
+      # Какой слушатель использует контроллер (для Raft)
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+
+      # ========== ПРОИЗВОДИТЕЛЬНОСТЬ ==========
+      # Настройки памяти для Java-процесса
+      - KAFKA_HEAP_OPTS=${KAFKA_HEAP_OPTS:--Xmx512m -Xms256m}
+
+      # ========== УПРАВЛЕНИЕ ДАННЫМИ ==========
+      # Время жизни сообщений (в часах)
+      - KAFKA_CFG_LOG_RETENTION_HOURS=${KAFKA_LOG_RETENTION_HOURS:-168}
+
+      # Максимальный размер файла сегмента
+      - KAFKA_CFG_LOG_SEGMENT_BYTES=${KAFKA_LOG_SEGMENT_BYTES:-1073741824}
+
+      # Общий лимит на партицию
+      - KAFKA_CFG_LOG_RETENTION_BYTES=${KAFKA_LOG_RETENTION_BYTES:-10737418240}
+
+      # Политика очистки (delete - удалять старые сообщения, compact - хранить последние)
+      - KAFKA_CFG_LOG_CLEANUP_POLICY=delete
+
+      # ========== ПОВЕДЕНИЕ ==========
+      # Автосоздание топиков (true/false из .env)
+      - KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE=${AUTO_CREATE_TOPICS:-false}
+
+      # ========== ЛОГИРОВАНИЕ ==========
+      # Уровень логов Kafka
+      - KAFKA_CFG_LOG_LEVEL=${KAFKA_LOG_LEVEL:-INFO}
+
+      # ⚠️ ID может быть любым числом от 1 до 1000
+      - KAFKA_CFG_NODE_ID=1
+
+    # Монтируем Docker volume для хранения данных
+    # Формат: [имя volume]:[путь в контейнере]
+    volumes:
+      - ${KAFKA_VOLUME_NAME:-kafka_data}:/bitnami/kafka
+
+    # ⚠️ ВАЖНО: healthcheck должен быть на том же уровне, что и image, ports, environment
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1',
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ========== ДОБАВЛЯЕМ KAFKA-UI ==========
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - '8080:8080' # Веб-интерфейс будет доступен на localhost:8080
+    environment:
+      # Включаем динамическую конфигурацию
+      - DYNAMIC_CONFIG_ENABLED=true
+
+      # Конфигурация кластера (используем внутренний слушатель Kafka)
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:${KAFKA_INTERNAL_PORT:-9091}
+      - KAFKA_CLUSTERS_0_READONLY=false
+
+      # Настройки логирования (опционально, для отладки)
+      - LOGGING_LEVEL_ROOT=INFO
+
+    depends_on:
+      kafka:
+        condition: service_healthy # Ждём, пока Kafka полностью запустится
+
+    restart: unless-stopped
+
+# Определение томов
+volumes:
+  kafka_data:
+    # Явно задаем имя тома (можно переопределить через .env)
+    name: ${KAFKA_VOLUME_NAME:-kafka_data}
