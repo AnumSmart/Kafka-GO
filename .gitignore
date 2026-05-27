@@ -1,4 +1,7 @@
-.env
+# Игнорировать ВСЕ .env файлы в любой директории (рекурсивно)
+**/.env
+**/.env.local
+**/.env.*.local                 
 
 # Binaries
 *.exe
@@ -35,3 +38,5 @@ Thumbs.db
 *.test
 *.prof
 *.out
+
+
