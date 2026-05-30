@@ -70,7 +70,7 @@ func (c *ProducerConfig) Validate() error {
 }
 
 func LoadProducerConfig(configPath string) (*ProducerConfig, error) {
-	return LoadYAMLConfig(configPath, DefaultProducerConfig)
+	return LoadYAMLConfig[ProducerConfig](configPath, DefaultProducerConfig)
 }
 
 // Вспомогательные функции
