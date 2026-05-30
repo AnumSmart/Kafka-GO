@@ -12,12 +12,7 @@ Work with Kafka using [kafka-go](https://github.com/segmentio/kafka-go) library.
 
 ```
 KAFKAGO/
-├── simple_kafka/                       # сервис с простым использованием kafka
-│ ├── cmd/                              # точки входа
-│ |     ├── producer
-│ |     └── consumer
-│ ├── internal/                         # внутренняя логика
-│ └── go.mod                            # зависимости для этого сервиса
+├── apps/                               # сервисы с простым использованием kafka
 ├── deployments/                        # Docker Compose
 │ ├── kafka/                            # Развертывание Kafka
 │ |     ├── .env

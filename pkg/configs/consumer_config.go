@@ -79,7 +79,7 @@ func (c *ConsumerConfig) Validate() error {
 
 // LoadConsumerConfig - загружает конфиг консьюмера из YAML файла
 func LoadConsumerConfig(configPath string) (*ConsumerConfig, error) {
-	return LoadYAMLConfig(configPath, DefaultConsumerConfig)
+	return LoadYAMLConfig[ConsumerConfig](configPath, DefaultConsumerConfig)
 }
 
 // ========== Вспомогательные функции ==========
