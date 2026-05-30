@@ -2,5 +2,6 @@ go 1.25.0
 
 use (
 	./pkg
-	./simple_kafka
+	./apps/kafka-consumer
+	./apps/kafka-producer
 )
