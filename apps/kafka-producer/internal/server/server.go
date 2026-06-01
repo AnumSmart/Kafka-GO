@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"kafka-producer/internal/server/handlers"
 	"log"
 	"net/http"
@@ -62,4 +63,24 @@ func (a *ProducerServer) Shutdown(ctx context.Context) error {
 
 	log.Println("Server shutdown completed")
 	return nil
+}
+
+// Close - принудительная остановка сервера (немедленное закрытие всех соединений)
+// В отличие от Shutdown, этот метод не ждёт завершения активных запросов
+func (a *ProducerServer) Close() error {
+	log.Println("Forcing server shutdown...")
+
+	// Принудительное закрытие HTTP сервера
+	// httpServer.Close() закрывает все активные слушатели и соединения немедленно
+	if err := a.httpServer.Close(); err != nil {
+		return fmt.Errorf("server force close: %w", err)
+	}
+
+	log.Println("Server force closed")
+	return nil
+}
+
+// получаем порт для внешнего использования
+func (a *ProducerServer) GetPort() string {
+	return a.config.Port
 }
