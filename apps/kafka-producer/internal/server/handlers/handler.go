@@ -1,17 +1,22 @@
 package handlers
 
 import (
+	kafkalayer "kafka-producer/internal/kafka_layer"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 )
 
 // Хэндлер для продьюссера
-type Handler struct{}
+type Handler struct {
+	kafkaProducer kafkalayer.ProducerInterface
+}
 
 // конструктор для создания хэндлера
-func NewHandler() *Handler {
-	return &Handler{}
+func NewHandler(producer kafkalayer.ProducerInterface) *Handler {
+	return &Handler{
+		kafkaProducer: producer,
+	}
 }
 
 // Создаём ЭХО-метод для тестирвоания

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"kafka-producer/internal/config"
+	kafkalayer "kafka-producer/internal/kafka_layer"
 	"kafka-producer/internal/server"
 	"kafka-producer/internal/server/handlers"
 	"log"
@@ -19,7 +20,8 @@ type Container struct {
 	// ==================== ХЕНДЛЕРЫ (HTTP) =================
 	handler *handlers.Handler // хэндлер для работы
 	// ==================== KAFKA ===========================
-	kafkaWriter *kafka.Writer // механизм добавления сообщений в очередь
+	kafkaWriter   *kafka.Writer                // механизм добавления сообщений в очередь
+	kafkaProducer kafkalayer.ProducerInterface // СЛОЙ KAFKA
 	// ==================== Сервер (HTTP) ===================
 	httpServer *server.ProducerServer // http сервер
 	// ==================== УПРАВЛЕНИЕ РЕСУРСАМИ ============

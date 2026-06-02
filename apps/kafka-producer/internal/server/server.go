@@ -37,7 +37,8 @@ func NewProducerServer(ctx context.Context, config *configs.ServerConfig, handle
 
 // Метод для маршрутизации сервера
 func (a *ProducerServer) SetUpRoutes() {
-	a.router.GET("/hello", a.Handler.Echo) // тестовый ендпоинт
+	a.router.GET("/hello", a.Handler.Echo)        // тестовый ендпоинт
+	a.router.POST("/send", a.Handler.CreateOrder) // отправка одного сообщения (создание заказа)
 }
 
 // Метод для запуска сервера
