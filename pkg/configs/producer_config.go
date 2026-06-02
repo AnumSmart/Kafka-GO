@@ -38,7 +38,7 @@ func (c *ProducerConfig) ToKafkaWriterConfig() kafka.WriterConfig {
 	return kafka.WriterConfig{
 		Brokers:          c.Brokers,
 		Topic:            c.Topic,
-		Balancer:         &kafka.LeastBytes{},
+		Balancer:         &kafka.Hash{}, // Гарантия порядка
 		CompressionCodec: getCompressionCodec(c.ProducerSpecific.Compression),
 		RequiredAcks:     getRequiredAcks(c.ProducerSpecific.RequiredAcks),
 		MaxAttempts:      c.ProducerSpecific.MaxAttempts,
