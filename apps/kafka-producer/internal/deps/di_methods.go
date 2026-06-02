@@ -3,6 +3,7 @@ package deps
 import (
 	"context"
 	"fmt"
+	kafkalayer "kafka-producer/internal/kafka_layer"
 	"kafka-producer/internal/server"
 	"kafka-producer/internal/server/handlers"
 	"log"
@@ -36,12 +37,15 @@ func (c *Container) initResources(ctx context.Context) error {
 		log.Println("Kafka Writer connection closed")
 		return nil
 	})
+
+	// создаём слой Kafka Producer (обёртку)
+	c.kafkaProducer = kafkalayer.NewProducer(kafkaWriter)
 	return nil
 }
 
 // внутренний метод инициализации хэндлеров
 func (c *Container) initHandlers() error {
-	handler := handlers.NewHandler()
+	handler := handlers.NewHandler(c.kafkaProducer)
 	if handler == nil {
 		return fmt.Errorf("failed to create kafka producer handler")
 	}
