@@ -106,9 +106,6 @@ func (c *FranzConsumerConfig) ToKgoOptions() ([]kgo.Opt, error) {
 		// RebalanceTimeout - таймаут ребалансировки
 		// Время, которое consumer может дообрабатывать сообщения
 		kgo.RebalanceTimeout(c.ConsumerSpecific.RebalanceTimeout),
-
-		// MaxRecordsPerFetch - максимальное записей за fetch
-		kgo.MaxRecordsPerFetch(c.ConsumerSpecific.MaxRecordsPerFetch),
 	}
 
 	// Настройка offset (с какого места читать)
