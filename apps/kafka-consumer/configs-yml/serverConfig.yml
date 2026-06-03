@@ -1,6 +1,0 @@
-host: 'localhost'
-port: '8090'
-read_timeout: 5s
-write_timeout: 7s
-idle_timeout: 40s
-max_header_bytes: 1048576
