@@ -4,4 +4,5 @@ use (
 	./pkg
 	./apps/kafka-consumer
 	./apps/kafka-producer
+	./global_models
 )
