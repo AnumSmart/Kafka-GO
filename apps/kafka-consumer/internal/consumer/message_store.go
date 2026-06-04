@@ -21,12 +21,17 @@ type MessageRecord struct {
 type MessageStore struct {
 	mu       sync.RWMutex    // mu - мьютекс для синхронизации доступа к слайсу
 	messages []MessageRecord // messages - слайс для хранения записей сообщений
+	maxSize  int             // максимальное количество сообщений
 }
 
 // NewMessageStore - конструктор, создаёт новое хранилище сообщений
-func NewMessageStore() *MessageStore {
+func NewMessageStore(maxSize int) *MessageStore {
+	if maxSize <= 0 {
+		maxSize = 10000 // дефолтный лимит
+	}
 	return &MessageStore{
 		messages: make([]MessageRecord, 0),
+		maxSize:  maxSize,
 	}
 }
 
@@ -34,6 +39,11 @@ func NewMessageStore() *MessageStore {
 func (s *MessageStore) Add(record MessageRecord) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if len(s.messages) >= s.maxSize {
+		// Удаляем старые сообщения (например, первые 10%)
+		s.messages = s.messages[s.maxSize/10:]
+	}
 
 	// Добавляем запись в слайс
 	s.messages = append(s.messages, record)
