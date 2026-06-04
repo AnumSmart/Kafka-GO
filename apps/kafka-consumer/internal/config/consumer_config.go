@@ -14,6 +14,7 @@ const (
 
 type ConsumerConfig struct {
 	ConsumerConfig *configs.FranzConsumerConfig
+	RedisConf      *configs.RedisConfig // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
 }
 
 // загружаем конфиг-данные из .env
@@ -43,8 +44,15 @@ func LoadConfig() (*ConsumerConfig, error) {
 		return nil, fmt.Errorf("Error during validation of consumer config: %s\n", err.Error())
 	}
 
+	// загружаем данные из .env файла для redisConfig
+	redisConfig, err := configs.NewRedisConfigFromEnv("REDIS_CACHE")
+	if err != nil {
+		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
+	}
+
 	return &ConsumerConfig{
 		ConsumerConfig: consumerConfig,
+		RedisConf:      redisConfig,
 	}, nil
 }
 
