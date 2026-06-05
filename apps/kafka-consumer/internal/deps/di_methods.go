@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"kafka-consumer/internal/consumer"
+	"kafka-consumer/internal/idempotency"
 	"log"
+	"pkg/redis"
 
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -13,10 +15,12 @@ const (
 	storageVolume = 100
 )
 
+// добаляем функции для закрытия ресурсов
 func (c *Container) addCloser(closer func() error) {
 	c.closers = append(c.closers, closer)
 }
 
+// метод для инициализации ресурсов
 func (c *Container) initResources(ctx context.Context) error {
 	// Получаем franz-go опции из конфига
 	opts, err := c.config.GetConsumerConfig().ToKgoOptions()
@@ -31,6 +35,7 @@ func (c *Container) initResources(ctx context.Context) error {
 	}
 
 	c.kafkaClient = client
+	log.Println("✓ Kafka client initialized")
 
 	// Регистрируем закрытие клиента
 	c.addCloser(func() error {
@@ -39,9 +44,49 @@ func (c *Container) initResources(ctx context.Context) error {
 		return nil
 	})
 
+	// создаём редис-клиент для идемпотентности
+	redisIdemp, err := redis.NewRedisCacheRepository(ctx, c.config.RedisConf)
+	if err != nil {
+		return fmt.Errorf("failed to create redis idemp client: %w", err)
+	}
+
+	c.redisClient = redisIdemp
+	log.Println("✓ Redis client initialized")
+
+	// Регистрируем закрытие клиента
+	c.addCloser(func() error {
+		c.redisClient.Close()
+		log.Println("Redis idemp client connection closed")
+		return nil
+	})
+
 	return nil
 }
 
+// метод для инициализации кэша для идемпотентности
+func (c *Container) initIdempotencyCache(ctx context.Context) error {
+
+	cache, err := idempotency.NewIdempotencyCache(
+		c.redisClient,
+		"event",
+		86400, // 24 часа по умолчанию
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create idempotency cache: %w", err)
+	}
+
+	// Health check
+	if err := cache.Ping(ctx); err != nil {
+		return fmt.Errorf("idempotency cache health check failed: %w", err)
+	}
+
+	c.idempotencyCache = cache
+	log.Println("✓ Idempotency cache initialized")
+	return nil
+
+}
+
+// метод для инициализации консьюмера
 func (c *Container) initConsumer(ctx context.Context) error {
 	// Создаём хранилище сообщений
 	store := consumer.NewMessageStore(storageVolume)
@@ -50,6 +95,7 @@ func (c *Container) initConsumer(ctx context.Context) error {
 	simpleConsumer := consumer.NewSimpleConsumer(
 		c.kafkaClient,
 		store,
+		c.redisClient,
 		false,
 	)
 

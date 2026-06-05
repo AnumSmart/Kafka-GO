@@ -2,6 +2,7 @@ package consumer
 
 import (
 	"context"
+	"global_models/global_cache"
 	"pkg/kafka"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -11,42 +12,14 @@ import (
 type SimpleConsumer struct {
 	baseConsumer *kafka.BaseConsumer
 	messageStore *MessageStore
-}
-
-// StoreHandler - обработчик, сохраняющий сообщения в хранилище
-type StoreHandler struct {
-	store *MessageStore
-}
-
-func NewStoreHandler(store *MessageStore) *StoreHandler {
-	return &StoreHandler{
-		store: store,
-	}
-}
-
-// HandleMessage - реализация интерфейса MessageHandler
-func (h *StoreHandler) HandleMessage(record *kgo.Record) error {
-	// Сохраняем сообщение в хранилище
-	h.store.AddFromKafka(
-		record.Topic,
-		record.Partition,
-		record.Offset,
-		record.Key,
-		record.Value,
-	)
-	return nil
-}
-
-// OnBatchProcessed - вызывается после обработки батча
-func (h *StoreHandler) OnBatchProcessed(batchSize int) {
-	// Можно добавить дополнительную логику после обработки батча
-	// Например, логирование или отправку метрик
+	cache        global_cache.Cache
+	debugEnabled bool
 }
 
 // NewSimpleConsumer - создаёт consumer с хранилищем
-func NewSimpleConsumer(client *kgo.Client, store *MessageStore, debugEnabled bool) *SimpleConsumer {
+func NewSimpleConsumer(client *kgo.Client, store *MessageStore, cache global_cache.Cache, debugEnabled bool) *SimpleConsumer {
 	// Создаём обработчик
-	handler := NewStoreHandler(store)
+	handler := NewStoreHandler(store, cache)
 
 	// Настраиваем опции (пока по умолчанию, но можно изменить)
 	opts := kafka.DefaultConsumerOptions()
@@ -58,6 +31,8 @@ func NewSimpleConsumer(client *kgo.Client, store *MessageStore, debugEnabled boo
 	return &SimpleConsumer{
 		baseConsumer: baseConsumer,
 		messageStore: store,
+		cache:        cache,
+		debugEnabled: debugEnabled,
 	}
 }
 
