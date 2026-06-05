@@ -3,8 +3,10 @@ package deps
 import (
 	"context"
 	"fmt"
+	"global_models/global_cache"
 	"kafka-consumer/internal/config"
 	"kafka-consumer/internal/consumer"
+	"kafka-consumer/internal/idempotency"
 	"log"
 	"sync"
 
@@ -18,6 +20,10 @@ type Container struct {
 	// ==================== KAFKA CONSUMER =================
 	kafkaClient *kgo.Client
 	consumer    *consumer.SimpleConsumer
+
+	// ==================== ИДЕМПОТЕНТНОСТЬ =================
+	redisClient      global_cache.Cache
+	idempotencyCache *idempotency.IdempotencyCache
 
 	// ==================== УПРАВЛЕНИЕ РЕСУРСАМИ ============
 	closers   []func() error
@@ -42,7 +48,13 @@ func NewContainer(ctx context.Context, cfg *config.ConsumerConfig) (*Container, 
 		return nil, fmt.Errorf("init resources: %w", err)
 	}
 
-	// 2. Инициализация consumer
+	// 2. Инициализация IdempotencyCache
+	if err := c.initIdempotencyCache(ctx); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("init idempotency cache: %w", err)
+	}
+
+	// 3. Инициализация consumer
 	if err := c.initConsumer(ctx); err != nil {
 		c.Close()
 		return nil, fmt.Errorf("init consumer: %w", err)
