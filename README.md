@@ -1,6 +1,7 @@
 # KafkaGo
 
-Work with Kafka using [kafka-go](https://github.com/segmentio/kafka-go) library.
+Work with Kafka using [kafka-go](https://github.com/segmentio/kafka-go) library (producer).
+Work with Kafka using [franz-go](https://github.com/twmb/franz-go/pkg/kgo) library (consumer).
 
 ## 📋 Требования
 
@@ -13,6 +14,8 @@ Work with Kafka using [kafka-go](https://github.com/segmentio/kafka-go) library.
 ```
 KAFKAGO/
 ├── apps/                               # сервисы с простым использованием kafka
+│ ├── kafka-consumer/                   # Сервис консьюмера
+│ └── kafka-producer/                   # Сервис продьюссера
 ├── deployments/                        # Docker Compose
 │ ├── kafka/                            # Развертывание Kafka
 │ |     ├── .env
@@ -20,6 +23,7 @@ KAFKAGO/
 │ |     └── docker-compose.yml
 ├── pkg/                                # общие библиотеки
 │ ├── configs/                          # логика конфигов
+│ ├── kafka/                            # логика создания kafka.reader и kafka.wtiter
 │ └── go.mod                            # зависимости для этого пакета
 ├── Makefile
 ├── go.work
