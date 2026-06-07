@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"global_models/global_cache"
-	"kafka-consumer/internal/config"
-	"kafka-consumer/internal/consumer"
-	"kafka-consumer/internal/idempotency"
+	"kafka_consumer/internal/config"
+	"kafka_consumer/internal/consumer"
+	"kafka_consumer/internal/idempotency"
+
 	"log"
 	"sync"
 

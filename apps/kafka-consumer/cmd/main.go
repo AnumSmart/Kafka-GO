@@ -2,7 +2,8 @@ package main
 
 import (
 	"context"
-	"kafka-consumer/internal/config"
+	"kafka_consumer/internal/config"
+
 	"log"
 	"os"
 )

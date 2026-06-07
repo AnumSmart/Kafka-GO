@@ -3,8 +3,8 @@ package deps
 import (
 	"context"
 	"fmt"
-	"kafka-consumer/internal/consumer"
-	"kafka-consumer/internal/idempotency"
+	"kafka_consumer/internal/consumer"
+	"kafka_consumer/internal/idempotency"
 	"log"
 	"pkg/redis"
 

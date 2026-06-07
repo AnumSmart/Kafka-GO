@@ -5,8 +5,8 @@ package main
 
 import (
 	"context"
-	"kafka-consumer/internal/config"
-	"kafka-consumer/internal/deps"
+	"kafka_consumer/internal/config"
+	"kafka_consumer/internal/deps"
 )
 
 // NewDIContainer - фабричная функция для создания DI контейнера

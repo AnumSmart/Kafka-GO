@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
@@ -55,6 +56,7 @@ func (h *Handler) CreateOrder(c *gin.Context) {
 	defer cancel()
 
 	if err := h.kafkaProducer.SendOrderEvent(ctx, event); err != nil {
+		log.Printf("Kafka sending message error:%v", err.Error())
 		c.JSON(http.StatusInternalServerError, CreateOrderResponse{
 			Status:  "error",
 			Message: "Failed to send event to Kafka: " + err.Error(),
