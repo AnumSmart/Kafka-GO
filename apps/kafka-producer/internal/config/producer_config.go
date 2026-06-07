@@ -31,7 +31,7 @@ func LoadConfig() (*ProducerConfig, error) {
 	}
 
 	// загружаем данные из .yml файла для producerConfig
-	producerConfig, err := configs.LoadProducerConfig(os.Getenv("SERVER_CONFIG_ADDRESS_STRING"))
+	producerConfig, err := configs.LoadProducerConfig(os.Getenv("PRODUCER_CONFIG_ADDRESS_STRING"))
 	if err != nil {
 		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
 	}

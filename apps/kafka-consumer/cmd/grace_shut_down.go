@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
-	"kafka-consumer/internal/consumer"
-	"kafka-consumer/internal/deps"
+
+	"kafka_consumer/internal/consumer"
+	"kafka_consumer/internal/deps"
+
 	"log"
 	"os"
 	"os/signal"

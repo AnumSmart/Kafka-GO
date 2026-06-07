@@ -13,7 +13,7 @@ kafka_up:
 	@echo "[INFO] Starting Kafka and KafkaUI containers..."
 	$(KAFKA_COMPOSE_CMD) up -d
 	@echo "[OK] Kafka Container started"
-	@make --no-print-directory kafka_container_status
+	@make --no-print-directory kafka_status
 
 # Остановка контейнера для kafka и kafkaUI
 .PHONY: kafka_down
@@ -31,10 +31,10 @@ kafka_status:
 # Запуск контейнера для консьюмер редиса (идемпотентные ключи)
 .PHONY: consumer_redis_up
 consumer_redis_up:
-@echo "[INFO] Starting Consumer Redis container"
-$(CONSUMER_REDIS_COMPOSE_CMD) up -d
-@echo "[OK] Consumer Redis Container started"
-@make --no-print-directory consumer_redis_status
+	@echo "[INFO] Starting Consumer Redis container"
+	$(CONSUMER_REDIS_COMPOSE_CMD) up -d
+	@echo "[OK] Consumer Redis Container started"
+	@make --no-print-directory consumer_redis_status
 
 # Остановка контейнера для консьюмер редиса (идемпотентные ключи)
 .PHONY: consumer_redis_down

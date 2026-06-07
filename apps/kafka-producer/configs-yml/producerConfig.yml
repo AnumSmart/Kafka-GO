@@ -2,7 +2,7 @@ brokers:
   - 'localhost:9092'
 topic: 'orders'
 group_id: 'order-producer'
-batch_size: 100
+batch_size: 1 # если за 5 сек не будет нужного количества собщений в батче - будет ошибка по таймауту
 batch_timeout: 5s
 min_bytes: 1
 max_bytes: 10485760

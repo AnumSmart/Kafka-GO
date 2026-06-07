@@ -16,6 +16,11 @@ func NewProducerFromConfig(conf kafka.WriterConfig) (*kafka.Writer, error) {
 
 	// создаём writer
 	writer := kafka.NewWriter(conf)
+	writer.AllowAutoTopicCreation = false // принудительно отключаем автосоздание топика
+
+	// Добавьте лог для проверки настроек
+	fmt.Printf("Writer created: brokers=%v, topic=%s, allowAutoCreate=%v\n",
+		conf.Brokers, conf.Topic, writer.AllowAutoTopicCreation)
 
 	return writer, nil
 }
