@@ -96,7 +96,7 @@ func (c *Container) initConsumer(ctx context.Context) error {
 		c.kafkaClient,
 		store,
 		c.redisClient,
-		false,
+		true,
 	)
 
 	if simpleConsumer == nil {
