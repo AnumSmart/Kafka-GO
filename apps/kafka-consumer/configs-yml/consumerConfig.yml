@@ -13,9 +13,9 @@ max_wait: 1s
 # Специфичные настройки franz-go consumer
 consumer:
   enabled: true
-  start_offset: 'latest' # earliest, latest, at_end, at_start
-  commit_interval: 0 # 0 = manual commit
+  start_offset: 'earliest' # earliest, latest, at_end, at_start
+  commit_interval: 0s # 0 = manual commit
   session_timeout: 30s
   rebalance_timeout: 60s
-  max_records_per_fetch: 1000
+  max_records_per_fetch: 5
   disable_auto_commit: true
