@@ -28,11 +28,6 @@ func (a *kgoProducerAdapter) ProduceSync(ctx context.Context, records ...*kgo.Re
 	return a.client.ProduceSync(ctx, records...)
 }
 
-// ProduceAsync - асинхронная отправка сообщений
-func (a *kgoProducerAdapter) ProduceAsync(ctx context.Context, records ...*kgo.Record) func() {
-	return a.client.ProduceAsync(ctx, records...)
-}
-
 // Close - закрывает клиент
 func (a *kgoProducerAdapter) Close() {
 	a.client.Close()
