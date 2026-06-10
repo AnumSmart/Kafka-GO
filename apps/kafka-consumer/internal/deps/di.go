@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"global_models/global_cache"
 	"kafka_consumer/internal/config"
-	"kafka_consumer/internal/consumer"
 	"kafka_consumer/internal/idempotency"
 
 	"log"
+	"pkg/kafka"
 	"sync"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -16,11 +16,17 @@ import (
 
 type Container struct {
 	// ==================== КОНФИГУРАЦИЯ ====================
-	config *config.ConsumerConfig
+	config *config.ConsumerServiceConfig
 
 	// ==================== KAFKA CONSUMER =================
-	kafkaClient *kgo.Client
-	consumer    *consumer.SimpleConsumer
+	consumerKafkaClient *kgo.Client
+	consumer            kafka.Consumer // используем интерфейс вместо конкретной реализации
+
+	// ==================== KAFKA DLQ ======================
+	dlqClient *kgo.Client
+
+	// ==================== HANDLERS ========================
+	messageHandler kafka.MessageHandler // бизнес-обработчик сообщений
 
 	// ==================== ИДЕМПОТЕНТНОСТЬ =================
 	redisClient      global_cache.Cache
@@ -32,7 +38,7 @@ type Container struct {
 	closeErr  error
 }
 
-func NewContainer(ctx context.Context, cfg *config.ConsumerConfig) (*Container, error) {
+func NewContainer(ctx context.Context, cfg *config.ConsumerServiceConfig) (*Container, error) {
 	defer func() {
 		if r := recover(); r != nil {
 			fmt.Printf("panic inside DI container constructor: %v\n", r)
