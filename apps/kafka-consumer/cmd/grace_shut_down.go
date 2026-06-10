@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-
-	"kafka_consumer/internal/consumer"
 	"kafka_consumer/internal/deps"
 
 	"log"
 	"os"
 	"os/signal"
+	"pkg/kafka"
 	"syscall"
 	"time"
 )
@@ -17,7 +16,7 @@ import (
 const GracefulShutdownTimeout = 30 * time.Second
 
 // waitForShutdown ожидает сигнал завершения или ошибку consumer
-func waitForShutdown(simpleConsumer *consumer.SimpleConsumer, consumerErrors <-chan error) {
+func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error) {
 	// Настраиваем канал для системных сигналов
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan,
@@ -49,7 +48,7 @@ func waitForShutdown(simpleConsumer *consumer.SimpleConsumer, consumerErrors <-c
 }
 
 // performGracefulShutdown выполняет корректное завершение работы consumer
-func performGracefulShutdown(simpleConsumer *consumer.SimpleConsumer) {
+func performGracefulShutdown(simpleConsumer kafka.Consumer) {
 	log.Println("⏳ Waiting for current batch processing to complete...")
 
 	// Создаем контекст с таймаутом для graceful shutdown

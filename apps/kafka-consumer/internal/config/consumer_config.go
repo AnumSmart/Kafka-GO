@@ -12,28 +12,29 @@ const (
 	envPath = "c:\\Son_Alex\\GO_projects\\KAFKA\\KafkaGo\\apps\\kafka-consumer\\.env"
 )
 
-type ConsumerConfig struct {
-	ConsumerConfig *configs.FranzConsumerConfig
-	RedisConf      *configs.RedisConfig // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
+type ConsumerServiceConfig struct {
+	ConsumerConfig    *configs.FranzConsumerConfig
+	DLQProducerConfig *configs.FranzProducerConfig
+	RedisConf         *configs.RedisConfig // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
 }
 
 // загружаем конфиг-данные из .env
-func LoadConfig() (*ConsumerConfig, error) {
+func LoadConfig() (*ConsumerServiceConfig, error) {
 	err := g.Load(envPath)
 	if err != nil {
 		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
 	}
 
 	// проверка, что указан путь к .yml файлу
-	yamlConfigPath := os.Getenv("CONSUMER_CONFIG_ADDRESS_STRING")
-	if yamlConfigPath == "" {
+	yamlConsumerConfigPath := os.Getenv("CONSUMER_CONFIG_ADDRESS_STRING")
+	if yamlConsumerConfigPath == "" {
 		// Если переменная окружения не задана - предупреждение, но можно продолжить
 		// LoadFranzConsumerConfig использует дефолтный конфиг в этом случае
 		fmt.Println("WARNING: CONSUMER_CONFIG_ADDRESS_STRING is not set, using default config")
 	}
 
 	// загружаем данные из .yml файла для consumerConfig
-	consumerConfig, err := configs.LoadFranzConsumerConfig(yamlConfigPath)
+	consumerConfig, err := configs.LoadFranzConsumerConfig(yamlConsumerConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
 	}
@@ -44,35 +45,55 @@ func LoadConfig() (*ConsumerConfig, error) {
 		return nil, fmt.Errorf("Error during validation of consumer config: %s\n", err.Error())
 	}
 
+	// проверка, что указан путь к .yml файлу
+	yamlDLQProducerConfigPath := os.Getenv("DLQ_PRODUCER_CONFIG_ADDRESS_STRING")
+	if yamlDLQProducerConfigPath == "" {
+		// Если переменная окружения не задана - предупреждение, но можно продолжить
+		// LoadFranzConsumerConfig использует дефолтный конфиг в этом случае
+		fmt.Println("WARNING: DLQ_PRODUCER_CONFIG_ADDRESS_STRING is not set, using default config")
+	}
+
+	// загружаем данные из .yml файла для dlqProducerConfig
+	dlqProducerConfig, err := configs.LoadFranzProducerConfig(yamlDLQProducerConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
+	}
+
 	// загружаем данные из .env файла для redisConfig
 	redisConfig, err := configs.NewRedisConfigFromEnv("REDIS_CACHE")
 	if err != nil {
 		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
 	}
 
-	return &ConsumerConfig{
-		ConsumerConfig: consumerConfig,
-		RedisConf:      redisConfig,
+	return &ConsumerServiceConfig{
+		ConsumerConfig:    consumerConfig,
+		DLQProducerConfig: dlqProducerConfig,
+		RedisConf:         redisConfig,
 	}, nil
 }
 
 // GetConsumerConfig - вспомогательный метод для получения franz-go конфига
 // Упрощает доступ к вложенной структуре
-func (c *ConsumerConfig) GetConsumerConfig() *configs.FranzConsumerConfig {
+func (c *ConsumerServiceConfig) GetConsumerConfig() *configs.FranzConsumerConfig {
 	return c.ConsumerConfig
 }
 
+// GetDLQProdConfig - вспомогательный метод для получения franz-go конфига для продьюссера DLQ
+func (c *ConsumerServiceConfig) GetDLQProdConfig() *configs.FranzProducerConfig {
+	return c.DLQProducerConfig
+}
+
 // GetBrokers - возвращает список брокеров
-func (c *ConsumerConfig) GetBrokers() []string {
+func (c *ConsumerServiceConfig) GetBrokers() []string {
 	return c.ConsumerConfig.Brokers
 }
 
 // GetTopic - возвращает название топика
-func (c *ConsumerConfig) GetTopic() string {
+func (c *ConsumerServiceConfig) GetTopic() string {
 	return c.ConsumerConfig.Topic
 }
 
 // GetGroupID - возвращает ID consumer группы
-func (c *ConsumerConfig) GetGroupID() string {
+func (c *ConsumerServiceConfig) GetGroupID() string {
 	return c.ConsumerConfig.GroupID
 }

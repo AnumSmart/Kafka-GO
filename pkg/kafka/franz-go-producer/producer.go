@@ -135,46 +135,6 @@ func (p *BaseProducer) SendBatch(ctx context.Context, messages []*kafka.Message)
 	return firstErr
 }
 
-// SendAsync - асинхронная отправка одного сообщения
-func (p *BaseProducer) SendAsync(ctx context.Context, msg *kafka.Message, onDone func(err error)) {
-	if msg == nil {
-		if onDone != nil {
-			onDone(ErrEmptyMessage)
-		}
-		return
-	}
-
-	topic := msg.Topic
-	if topic == "" {
-		topic = p.options.Topic
-	}
-	if topic == "" {
-		if onDone != nil {
-			onDone(ErrTopicNotSpecified)
-		}
-		return
-	}
-
-	record := FromKafkaMessage(msg)
-	if record.Topic == "" {
-		record.Topic = topic
-	}
-
-	p.logDebug("📤 Sending message async: topic=%s", record.Topic)
-
-	// Асинхронная отправка через интерфейс
-	p.client.ProduceAsync(ctx, record)()
-
-	// Для асинхронной отправки в franz-go нужно обработать результат через колбэк
-	// Это упрощенная версия - в реальном коде нужно использовать более сложный механизм
-	p.messagesSent.Add(1)
-	p.lastSendTime.Store(time.Now())
-
-	if onDone != nil {
-		onDone(nil)
-	}
-}
-
 // Close - закрывает продьюсер (реализация kafka.Producer)
 func (p *BaseProducer) Close() error {
 	log.Println("🛑 Closing producer...")

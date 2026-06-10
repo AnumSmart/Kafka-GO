@@ -2,13 +2,12 @@ package main
 
 import (
 	"context"
-	"kafka_consumer/internal/consumer"
-
 	"log"
+	"pkg/kafka"
 )
 
 // startConsumer запускает consumer и возвращает канал ошибок
-func startConsumer(ctx context.Context, simpleConsumer *consumer.SimpleConsumer) <-chan error {
+func startConsumer(ctx context.Context, simpleConsumer kafka.Consumer) <-chan error {
 	errorChan := make(chan error, 1)
 
 	go func() {

@@ -10,6 +10,5 @@ import (
 // Используется для DI и мокирования в тестах
 type ProducerClient interface {
 	ProduceSync(ctx context.Context, records ...*kgo.Record) kgo.ProduceResults
-	ProduceAsync(ctx context.Context, records ...*kgo.Record) func()
 	Close()
 }

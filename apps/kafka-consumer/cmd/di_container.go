@@ -11,6 +11,6 @@ import (
 
 // NewDIContainer - фабричная функция для создания DI контейнера
 // (обёртка для удобства)
-func NewDIContainer(ctx context.Context, cfg *config.ConsumerConfig) (*deps.Container, error) {
+func NewDIContainer(ctx context.Context, cfg *config.ConsumerServiceConfig) (*deps.Container, error) {
 	return deps.NewContainer(ctx, cfg)
 }

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"kafka_consumer/internal/consumer"
 	"kafka_consumer/internal/idempotency"
+
 	"log"
+	"pkg/kafka"
 	"pkg/redis"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -23,24 +25,46 @@ func (c *Container) addCloser(closer func() error) {
 // метод для инициализации ресурсов
 func (c *Container) initResources(ctx context.Context) error {
 	// Получаем franz-go опции из конфига
-	opts, err := c.config.GetConsumerConfig().ToKgoOptions()
+	consumerOpts, err := c.config.GetConsumerConfig().ToKgoOptions()
 	if err != nil {
-		return fmt.Errorf("failed to create kgo options: %w", err)
+		return fmt.Errorf("failed to create kgo options for consumer client: %w", err)
 	}
 
-	// Создаём Kafka клиент
-	client, err := kgo.NewClient(opts...)
+	// Создаём Kafka клиент для консьюмера
+	consumerClient, err := kgo.NewClient(consumerOpts...)
 	if err != nil {
 		return fmt.Errorf("failed to create kafka client: %w", err)
 	}
 
-	c.kafkaClient = client
-	log.Println("✓ Kafka client initialized")
+	c.consumerKafkaClient = consumerClient
+	log.Println("✓ Consumer Kafka client initialized")
 
 	// Регистрируем закрытие клиента
 	c.addCloser(func() error {
-		c.kafkaClient.Close()
+		c.consumerKafkaClient.Close()
 		log.Println("Kafka client connection closed")
+		return nil
+	})
+
+	// Создаём Kafka клиент для DLQ
+	dqlProdOpts, err := c.config.GetDLQProdConfig().ToKgoOptions()
+	if err != nil {
+		return fmt.Errorf("failed to create kgo options for dlq producer client: %w", err)
+	}
+
+	// Создаём Kafka клиент для dlq продьюссера
+	dlqClient, err := kgo.NewClient(dqlProdOpts...)
+	if err != nil {
+		return fmt.Errorf("failed to create kafka dlq producer client: %w", err)
+	}
+
+	c.dlqClient = dlqClient
+	log.Println("✓ DLQ Producer Kafka client initialized")
+
+	// Регистрируем закрытие клиента
+	c.addCloser(func() error {
+		c.dlqClient.Close()
+		log.Println("Kafka DLQ Producer client connection closed")
 		return nil
 	})
 
@@ -92,12 +116,10 @@ func (c *Container) initConsumer(ctx context.Context) error {
 	store := consumer.NewMessageStore(storageVolume)
 
 	// Создаём consumer
-	simpleConsumer := consumer.NewSimpleConsumer(
-		c.kafkaClient,
-		store,
-		c.redisClient,
-		true,
-	)
+	simpleConsumer, err := consumer.NewSimpleConsumer(c.consumerKafkaClient, c.dlqClient, store, c.redisClient, false)
+	if err != nil {
+		return fmt.Errorf("failed to create simple consumer")
+	}
 
 	if simpleConsumer == nil {
 		return fmt.Errorf("failed to create simple consumer")
@@ -140,6 +162,6 @@ func (c *Container) Close() error {
 }
 
 // Геттеры
-func (c *Container) GetConsumer() *consumer.SimpleConsumer {
+func (c *Container) GetConsumer() kafka.Consumer {
 	return c.consumer
 }

@@ -80,17 +80,3 @@ func ToDLQMessage(originalMsg *kafka.Message, err error, serviceName string) *ka
 		},
 	}
 }
-
-// BatchToKafkaMessages - конвертирует итератор записей в слайс общих сообщений
-func BatchToKafkaMessages(iter *kgo.RecordIter) []*kafka.Message {
-	if iter == nil {
-		return nil
-	}
-
-	var messages []*kafka.Message
-	for !iter.Done() {
-		record := iter.Next()
-		messages = append(messages, ToKafkaMessage(record))
-	}
-	return messages
-}
