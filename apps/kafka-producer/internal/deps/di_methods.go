@@ -7,7 +7,7 @@ import (
 	"kafka-producer/internal/server"
 	"kafka-producer/internal/server/handlers"
 	"log"
-	k "pkg/kafka"
+	k "pkg/kafka/kafka-go-segm-producer"
 )
 
 // Управление ресурсами (добавляем функцию закрытия в слайс)
