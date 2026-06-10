@@ -5,117 +5,107 @@ import (
 	"encoding/json"
 	"global_models/global_cache"
 	"log"
+	"pkg/kafka"
 	"time"
-
-	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// StoreHandler - обработчик, сохраняющий сообщения в хранилище с поддержкой идемпотентности
+// StoreHandler – обработчик, сохраняющий сообщения в хранилище с поддержкой идемпотентности
 type StoreHandler struct {
 	store       *MessageStore
 	cache       global_cache.Cache
 	cachePrefix string
-	cacheTTL    int
+	cacheTTL    time.Duration // теперь time.Duration для удобства
 	debug       bool
 }
 
-// NewStoreHandler - конструктор обработчика
-func NewStoreHandler(store *MessageStore, cache global_cache.Cache) *StoreHandler {
+// NewStoreHandler – конструктор обработчика, реализующего kafka.MessageHandler
+func NewStoreHandler(store *MessageStore, cache global_cache.Cache) kafka.MessageHandler {
 	return &StoreHandler{
 		store:       store,
 		cache:       cache,
 		cachePrefix: "event",
-		cacheTTL:    86400, // 24 часа по умолчанию
+		cacheTTL:    24 * time.Hour, // 24 часа
 		debug:       false,
 	}
 }
 
-// SetCacheTTL - установка TTL для кэша
+// SetCacheTTL – установка TTL для кэша (в секундах)
 func (h *StoreHandler) SetCacheTTL(ttlSeconds int) {
 	if ttlSeconds > 0 {
-		h.cacheTTL = ttlSeconds
+		h.cacheTTL = time.Duration(ttlSeconds) * time.Second
 	}
 }
 
-// SetDebug - включение/выключение отладочного логирования
+// SetDebug – включение/выключение отладочного логирования
 func (h *StoreHandler) SetDebug(debug bool) {
 	h.debug = debug
 }
 
-// HandleMessage - реализация интерфейса MessageHandler с идемпотентностью
-func (h *StoreHandler) HandleMessage(record *kgo.Record) error {
-	// Парсим сообщение для получения EventID
+// HandleMessage – реализация интерфейса kafka.MessageHandler с идемпотентностью
+func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) error {
+	// Парсим EventID из Value
 	var envelope struct {
 		EventID string `json:"event_id"`
 	}
-
-	if err := json.Unmarshal(record.Value, &envelope); err != nil {
+	if err := json.Unmarshal(msg.Value, &envelope); err != nil {
 		if h.debug {
 			log.Printf("⚠️ Failed to parse EventID from message: %v", err)
 		}
-		// Сохраняем сообщение без проверки (fail-open)
-		return h.saveMessage(record)
+		// fail-open: сохраняем без проверки идемпотентности
+		return h.saveMessage(msg)
 	}
 
-	// Если EventID пустой - пропускаем проверку идемпотентности
 	if envelope.EventID == "" {
 		if h.debug {
 			log.Printf("⚠️ Message without EventID, skipping idempotency check")
 		}
-		return h.saveMessage(record)
+		return h.saveMessage(msg)
 	}
 
-	// === ПРОВЕРКА ИДЕМПОТЕНТНОСТИ ===
+	// === Проверка идемпотентности ===
 	cacheKey := h.cachePrefix + ":" + envelope.EventID
-
-	exists, err := h.cache.Exists(context.Background(), cacheKey)
+	exists, err := h.cache.Exists(ctx, cacheKey)
 	if err != nil {
-		// При ошибке Redis - логируем и сохраняем сообщение (fail-open)
+		// Ошибка Redis – fail‑open: сохраняем сообщение, но логируем
 		log.Printf("⚠️ Redis Exists failed for %s: %v, saving message anyway", cacheKey, err)
-		return h.saveMessage(record)
+		return h.saveMessage(msg)
 	}
-
 	if exists {
-		// Дубликат - пропускаем сохранение
 		if h.debug {
 			log.Printf("⏭️ Duplicate event skipped: EventID=%s, Topic=%s, Partition=%d, Offset=%d",
-				envelope.EventID, record.Topic, record.Partition, record.Offset)
+				envelope.EventID, msg.Topic, msg.Partition, msg.Offset)
 		}
-		return nil
+		return nil // дубликат – не сохраняем
 	}
 
-	// === СОХРАНЕНИЕ СООБЩЕНИЯ ===
-	if err := h.saveMessage(record); err != nil {
+	// === Сохранение сообщения ===
+	if err := h.saveMessage(msg); err != nil {
 		return err
 	}
 
-	// === ОТМЕТКА В REDIS ===
-	if err := h.cache.Set(context.Background(), cacheKey, []byte("1"), time.Duration(h.cacheTTL)); err != nil {
-		// Ошибка при сохранении в Redis не фатальна для сообщения, но логируем
+	// === Отметка в Redis ===
+	if err := h.cache.Set(ctx, cacheKey, []byte("1"), h.cacheTTL); err != nil {
 		log.Printf("⚠️ Failed to mark event %s as processed: %v", envelope.EventID, err)
 	}
-
 	if h.debug {
 		log.Printf("✅ Event processed: EventID=%s", envelope.EventID)
 	}
-
 	return nil
 }
 
-// saveMessage - сохранение сообщения в хранилище
-func (h *StoreHandler) saveMessage(record *kgo.Record) error {
+// saveMessage – сохранение сообщения в хранилище
+func (h *StoreHandler) saveMessage(msg *kafka.Message) error {
 	h.store.AddFromKafka(
-		record.Topic,
-		record.Partition,
-		record.Offset,
-		record.Key,
-		record.Value,
+		msg.Topic,
+		msg.Partition,
+		msg.Offset,
+		msg.Key,
+		msg.Value,
 	)
 	return nil
 }
 
-// OnBatchProcessed - вызывается после обработки батча
+// OnBatchProcessed – вызывается после обработки батча (можно добавить метрики)
 func (h *StoreHandler) OnBatchProcessed(batchSize int) {
-	// Можно добавить дополнительную логику после обработки батча
-	// Например, логирование или отправку метрик
+	// Например: log.Printf("Processed batch of %d messages", batchSize)
 }
