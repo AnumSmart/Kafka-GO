@@ -19,7 +19,7 @@
 │ |     |    ├── grace_shut_down.go              # логика gracefull shutdown
 │ |     |    └── start_consumer.go               # логика запуска консьюмера
 │ |     ├── configs-yml/                         # конфиги в yml формате
-│ |     |    └── consumer.yml                    # параметры consumer
+│ |     |    └── kafkaClientConfig.yml           # параметры kafka client (совмещает продьюссера и консьюммера)
 │ |     ├── internal/                            # внутренняя логика
 │ |     |    ├── config/                         # готовые конфиги (на базе pkg и yml файлов)
 │ |     |    |     └── consumer_config.go        # парсинг конфига

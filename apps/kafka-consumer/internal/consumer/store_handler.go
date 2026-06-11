@@ -3,7 +3,8 @@ package consumer
 import (
 	"context"
 	"encoding/json"
-	"global_models/global_cache"
+	"kafka_consumer/internal/idempotency"
+
 	"log"
 	"pkg/kafka"
 	"time"
@@ -12,27 +13,20 @@ import (
 // StoreHandler – обработчик, сохраняющий сообщения в хранилище с поддержкой идемпотентности
 type StoreHandler struct {
 	store       *MessageStore
-	cache       global_cache.Cache
+	cache       *idempotency.IdempotencyCache
 	cachePrefix string
-	cacheTTL    time.Duration // теперь time.Duration для удобства
+	cacheTTL    time.Duration
 	debug       bool
 }
 
-// NewStoreHandler – конструктор обработчика, реализующего kafka.MessageHandler
-func NewStoreHandler(store *MessageStore, cache global_cache.Cache) kafka.MessageHandler {
+// NewStoreHandler – конструктор обработчика
+func NewStoreHandler(store *MessageStore, cache *idempotency.IdempotencyCache) kafka.MessageHandler {
 	return &StoreHandler{
 		store:       store,
 		cache:       cache,
 		cachePrefix: "event",
-		cacheTTL:    24 * time.Hour, // 24 часа
+		cacheTTL:    24 * time.Hour,
 		debug:       false,
-	}
-}
-
-// SetCacheTTL – установка TTL для кэша (в секундах)
-func (h *StoreHandler) SetCacheTTL(ttlSeconds int) {
-	if ttlSeconds > 0 {
-		h.cacheTTL = time.Duration(ttlSeconds) * time.Second
 	}
 }
 
@@ -63,13 +57,14 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	}
 
 	// === Проверка идемпотентности ===
-	cacheKey := h.cachePrefix + ":" + envelope.EventID
-	exists, err := h.cache.Exists(ctx, cacheKey)
+	// ✅ Используем правильный метод IsProcessed
+	exists, err := h.cache.IsProcessed(ctx, envelope.EventID)
 	if err != nil {
 		// Ошибка Redis – fail‑open: сохраняем сообщение, но логируем
-		log.Printf("⚠️ Redis Exists failed for %s: %v, saving message anyway", cacheKey, err)
+		log.Printf("⚠️ Redis check failed for EventID=%s: %v, saving message anyway", envelope.EventID, err)
 		return h.saveMessage(msg)
 	}
+
 	if exists {
 		if h.debug {
 			log.Printf("⏭️ Duplicate event skipped: EventID=%s, Topic=%s, Partition=%d, Offset=%d",
@@ -83,12 +78,15 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 		return err
 	}
 
-	// === Отметка в Redis ===
-	if err := h.cache.Set(ctx, cacheKey, []byte("1"), h.cacheTTL); err != nil {
+	// === Отметка в Redis как обработанное ===
+	// ✅ Используем правильный метод MarkProcessed
+	if err := h.cache.MarkProcessed(ctx, envelope.EventID); err != nil {
 		log.Printf("⚠️ Failed to mark event %s as processed: %v", envelope.EventID, err)
 	}
+
 	if h.debug {
-		log.Printf("✅ Event processed: EventID=%s", envelope.EventID)
+		log.Printf("✅ Event processed: EventID=%s, Topic=%s, Offset=%d",
+			envelope.EventID, msg.Topic, msg.Offset)
 	}
 	return nil
 }
@@ -105,7 +103,9 @@ func (h *StoreHandler) saveMessage(msg *kafka.Message) error {
 	return nil
 }
 
-// OnBatchProcessed – вызывается после обработки батча (можно добавить метрики)
+// OnBatchProcessed – вызывается после обработки батча
 func (h *StoreHandler) OnBatchProcessed(batchSize int) {
-	// Например: log.Printf("Processed batch of %d messages", batchSize)
+	if h.debug {
+		log.Printf("📊 Batch processed: %d messages", batchSize)
+	}
 }

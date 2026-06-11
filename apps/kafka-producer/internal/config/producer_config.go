@@ -14,7 +14,7 @@ const (
 
 type ProducerConfig struct {
 	ServerConfig *configs.ServerConfig
-	ProdConfig   *configs.ProducerConfig
+	ProdConfig   *configs.ProducerConfigKafkaGo
 }
 
 // загружаем конфиг-данные из .env

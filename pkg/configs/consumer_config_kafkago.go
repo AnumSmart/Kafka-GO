@@ -7,8 +7,8 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// ConsumerConfig - минимальная конфигурация консьюмера для kafka-go
-type ConsumerConfig struct {
+// ConsumerConfigKafkaGo - минимальная конфигурация консьюмера для kafka-go
+type ConsumerConfigKafkaGo struct {
 	// Встраиваем базовый Kafka конфиг
 	KafkaConfig `yaml:",inline"`
 
@@ -25,8 +25,8 @@ type ConsumerSpecificConfig struct {
 }
 
 // DefaultConsumerConfig - дефолтный конфиг для консьюмера
-func DefaultConsumerConfig() *ConsumerConfig {
-	return &ConsumerConfig{
+func DefaultConsumerConfig() *ConsumerConfigKafkaGo {
+	return &ConsumerConfigKafkaGo{
 		KafkaConfig: *DefaultKafkaConfig(),
 		ConsumerSpecific: ConsumerSpecificConfig{
 			Enabled:        true,
@@ -38,7 +38,7 @@ func DefaultConsumerConfig() *ConsumerConfig {
 }
 
 // ToKafkaReaderConfig - конвертирует в конфиг kafka-go Reader
-func (c *ConsumerConfig) ToKafkaReaderConfig() kafka.ReaderConfig {
+func (c *ConsumerConfigKafkaGo) ToKafkaReaderConfig() kafka.ReaderConfig {
 	startOffset := getStartOffset(c.ConsumerSpecific.StartOffset)
 
 	return kafka.ReaderConfig{
@@ -58,7 +58,7 @@ func (c *ConsumerConfig) ToKafkaReaderConfig() kafka.ReaderConfig {
 }
 
 // Validate - минимальная валидация
-func (c *ConsumerConfig) Validate() error {
+func (c *ConsumerConfigKafkaGo) Validate() error {
 	if len(c.Brokers) == 0 {
 		return fmt.Errorf("brokers list cannot be empty")
 	}
@@ -78,8 +78,8 @@ func (c *ConsumerConfig) Validate() error {
 }
 
 // LoadConsumerConfig - загружает конфиг консьюмера из YAML файла
-func LoadConsumerConfig(configPath string) (*ConsumerConfig, error) {
-	return LoadYAMLConfig[ConsumerConfig](configPath, DefaultConsumerConfig)
+func LoadConsumerConfig(configPath string) (*ConsumerConfigKafkaGo, error) {
+	return LoadYAMLConfig[ConsumerConfigKafkaGo](configPath, DefaultConsumerConfig)
 }
 
 // ========== Вспомогательные функции ==========

@@ -3,7 +3,8 @@ package consumer
 import (
 	"context"
 	"fmt"
-	"global_models/global_cache"
+	"kafka_consumer/internal/idempotency"
+
 	"pkg/kafka"
 	franzgoconsumer "pkg/kafka/franz-go-consumer"
 
@@ -13,38 +14,58 @@ import (
 // SimpleConsumer - простой consumer с хранилищем сообщений
 type SimpleConsumer struct {
 	baseConsumer kafka.Consumer
-	baseProducer kafka.Producer
 	messageStore *MessageStore
-	cache        global_cache.Cache
 	debugEnabled bool
 }
 
 // NewSimpleConsumer - создаёт consumer с хранилищем
-// передаём которые клиенты, построенные на ymlconfig файлах
-func NewSimpleConsumer(consmClient, dlqClient *kgo.Client, store *MessageStore, cache global_cache.Cache, debugEnabled bool) (kafka.Consumer, error) {
-	// Создаём обработчик
-	handler := NewStoreHandler(store, cache)
+func NewSimpleConsumer(
+	kafkaClient *kgo.Client,
+	store *MessageStore,
+	idempotencyCache *idempotency.IdempotencyCache,
+	dlqTopic string,
+	dlqEnabled bool,
+	debugEnabled bool,
+) (kafka.Consumer, error) {
 
-	// создаём мэнеджера для отсылки сообщений в DLQ
-	dlqManager := franzgoconsumer.NewDLQManager(dlqClient, "orders.dlq", true)
+	// Создаём обработчик с идемпотентностью
+	handler := NewStoreHandler(store, idempotencyCache)
 
-	// Настраиваем опции (пока по умолчанию, но можно изменить)
+	// Включаем debug для хендлера, если нужно
+	if debugEnabled {
+		if sh, ok := handler.(*StoreHandler); ok {
+			sh.SetDebug(true)
+		}
+	}
+
+	// Создаём DLQ менеджер с ТЕМ ЖЕ клиентом
+	dlqManager := franzgoconsumer.NewDLQManager(
+		kafkaClient,
+		dlqTopic,
+		dlqEnabled,
+	)
+
+	// Настраиваем опции
 	consumerOpts := franzgoconsumer.DefaultOptions()
 	consumerOpts.EnableDebugLog = debugEnabled
 
-	// создаём консьюмер клиент через адаптер
-	consumerClient := franzgoconsumer.NewKafkaClientAdapter(consmClient)
+	// Создаём адаптер для consumer
+	consumerAdapter := franzgoconsumer.NewKafkaClientAdapter(kafkaClient)
 
 	// Создаём базовый consumer
-	baseConsumer, err := franzgoconsumer.NewBaseConsumer(consumerClient, handler, dlqManager, consumerOpts)
+	baseConsumer, err := franzgoconsumer.NewBaseConsumer(
+		consumerAdapter,
+		handler,
+		dlqManager,
+		consumerOpts,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("Error creation of baseConsumer:%v", err.Error())
+		return nil, fmt.Errorf("error creating baseConsumer: %w", err)
 	}
 
 	return &SimpleConsumer{
 		baseConsumer: baseConsumer,
 		messageStore: store,
-		cache:        cache,
 		debugEnabled: debugEnabled,
 	}, nil
 }
