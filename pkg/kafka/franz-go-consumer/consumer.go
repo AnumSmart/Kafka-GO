@@ -19,6 +19,9 @@ type BaseConsumer struct {
 	dlq     kafka.DLQSender      // используем общий интерфейс
 	options *ConsumerOptions
 
+	isShuttingDown atomic.Bool  // флаг, что consumer получил сигнал на остановку
+	currentBatch   atomic.Int64 // счетчик сообщений в текущей обработке
+
 	// статистика (атомарные для безопасности)
 	messagesProcessed atomic.Int64
 	messagesDLQ       atomic.Int64
@@ -29,6 +32,7 @@ type BaseConsumer struct {
 }
 
 // NewBaseConsumer - конструктор для DI (все зависимости передаются извне)
+// принимаем интерфейсы в параметрах, возвращаем  реализацию
 func NewBaseConsumer(client KafkaClient, handler kafka.MessageHandler, dlq kafka.DLQSender, opts *ConsumerOptions) (*BaseConsumer, error) {
 	if client == nil {
 		return nil, ErrClientNotInitialized
@@ -59,64 +63,134 @@ func (bc *BaseConsumer) Start(ctx context.Context) error {
 	iteration := 0
 
 	for {
-		select {
-		case <-ctx.Done():
-			log.Println("🛑 Context cancelled, stopping consumer...")
-			return nil
-		default:
-		}
+		// 🆕 Проверяем, не инициирован ли shutdown
+		if bc.isShuttingDown.Load() {
+			log.Println("📋 Shutdown initiated, checking pending messages...")
 
-		iteration++
-		bc.logDebug(iteration%100 == 0, "💓 Consumer alive, iteration %d", iteration)
-
-		fetches := bc.client.PollFetches(ctx)
-
-		if errs := fetches.Errors(); len(errs) > 0 {
-			bc.handleFetchErrors(errs)
+			// Если текущий батч пустой, выходим
+			if bc.currentBatch.Load() == 0 {
+				log.Println("✅ No pending messages, exiting")
+				return nil
+			}
+			// Если есть сообщения в обработке, даем им время завершиться
+			log.Printf("⏳ Waiting for %d pending messages to complete...", bc.currentBatch.Load())
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
 
-		batchSize := bc.processFetches(ctx, fetches)
+		select {
+		case <-ctx.Done():
+			// 🆕 Не выходим сразу, а инициируем graceful shutdown
+			log.Println("🛑 Received shutdown signal, initiating graceful shutdown...")
+			bc.isShuttingDown.Store(true)
 
-		bc.commitOffsets(ctx, batchSize)
+			// Продолжаем цикл, но уже в режиме завершения
+			// Не выходим здесь!
+			continue
 
-		if batchSize > 0 {
-			bc.handler.OnBatchProcessed(batchSize)
+		default:
+			// 🆕 Если не в режиме завершения, обрабатываем сообщения
+			if !bc.isShuttingDown.Load() {
+				iteration++
+				bc.logDebug(iteration%100 == 0, "💓 Consumer alive, iteration %d", iteration)
+				bc.pollAndProcessMessages(ctx)
+				bc.printStatsIfNeeded()
+			}
 		}
-
-		bc.printStatsIfNeeded()
 	}
 }
 
-// processFetches - обрабатывает полученные сообщения
-func (bc *BaseConsumer) processFetches(ctx context.Context, fetches kgo.Fetches) int {
+// 🆕 Выносим логику обработки в отдельный метод
+func (bc *BaseConsumer) pollAndProcessMessages(ctx context.Context) {
+	// Устанавливаем таймаут для poll, чтобы не блокировать надолго
+	// Это позволит быстрее реагировать на shutdown
+	pollCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	// получаем батч сообщений
+	fetches := bc.client.PollFetches(pollCtx)
+
+	if fetches.Empty() {
+		return // Нет сообщений, просто выходим
+	}
+
+	// обрабатываем ошибки получения сообщений, если они есть
+	if errs := fetches.Errors(); len(errs) > 0 {
+		bc.handleFetchErrors(errs)
+		return
+	}
+
+	// Обрабатываем сообщения
+	bc.processFetchesWithShutdownTracking(ctx, fetches)
+}
+
+// processFetchesWithShutdownTracking - обрабатывает сообщения с подсчетом активных сообщений
+func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, fetches kgo.Fetches) int {
 	iter := fetches.RecordIter()
-	batchCount := 0
+
+	// 🆕 Получаем все сообщения в слайс, чтобы знать точное количество
+	var records []*kgo.Record
+	for !iter.Done() {
+		records = append(records, iter.Next())
+	}
+
+	// проверка на отсутствие записей
+	if len(records) == 0 {
+		return 0
+	}
+
+	// 🆕 Устанавливаем счетчик активных сообщений
+	bc.currentBatch.Store(int64(len(records)))
+	defer bc.currentBatch.Store(0) // После обработки сбрасываем
+
 	successCount := 0
 
-	for !iter.Done() {
-		record := iter.Next()
-		batchCount++
-
+	// пытаемся обработать весь батч сообщений
+	for _, record := range records {
+		// 🆕 Проверяем, не инициирован ли shutdown во время обработки
+		if bc.isShuttingDown.Load() {
+			log.Printf("⚠️ Shutdown in progress, stopping batch processing at %d/%d",
+				successCount, len(records))
+			// Не коммитим частично обработанный батч
+			// При следующем запуске сообщения будут обработаны заново
+			return successCount
+		}
 		// Конвертируем kgo.Record в общую модель kafka.Message
 		msg := ToKafkaMessage(record)
 
 		// Вызываем бизнес-обработчик с общей моделью
 		if err := bc.handler.HandleMessage(ctx, msg); err != nil {
 			bc.handleProcessingError(ctx, msg, err)
-			continue
+			bc.currentBatch.Add(-1)
+			continue // после обработки сообщения переходим к следующему в цикле
 		}
 
 		successCount++
 		bc.messagesProcessed.Add(1)
-		bc.logDebug(bc.options.EnableDebugLog, "📨 Received: topic=%s, offset=%d", record.Topic, record.Offset)
+		bc.logDebug(bc.options.EnableDebugLog, "📨 Received: topic=%s, offset=%d",
+			record.Topic, record.Offset)
+
+		// 🆕 Уменьшаем счетчик активных сообщений
+		bc.currentBatch.Add(-1)
 	}
 
-	bc.logDebug(bc.options.EnableDebugLog && batchCount > 0,
-		"✅ Batch: %d total, %d success, %d errors",
-		batchCount, successCount, batchCount-successCount)
+	// 🆕 Коммитим оффсеты только если не в режиме завершения
+	if !bc.isShuttingDown.Load() {
+		bc.commitOffsets(ctx, len(records))
+	} else {
+		log.Printf("⚠️ Skipping commit during shutdown, messages will be reprocessed")
+	}
 
-	return batchCount
+	bc.logDebug(bc.options.EnableDebugLog && len(records) > 0,
+		"✅ Batch: %d total, %d success, %d errors",
+		len(records), successCount, len(records)-successCount)
+
+	// метод пока в разработке--------------------------------------------------------------------- пустышка
+	if successCount > 0 {
+		bc.handler.OnBatchProcessed(successCount)
+	}
+
+	return successCount
 }
 
 // handleProcessingError - обрабатывает ошибку обработки сообщения
@@ -161,13 +235,36 @@ func (bc *BaseConsumer) commitOffsets(ctx context.Context, batchSize int) {
 // Shutdown - завершение работы
 // Реализует kafka.Consumer.Shutdown
 func (bc *BaseConsumer) Shutdown() {
-	log.Println("🛑 Shutting down consumer...")
+	log.Println("🛑 Shutting down consumer gracefully...")
+
+	// 🆕 Инициируем graceful shutdown
+	bc.isShuttingDown.Store(true)
+
+	// 🆕 Ждем завершения обработки текущих сообщений с таймаутом
+	timeout := 30 * time.Second
+	deadline := time.Now().Add(timeout)
+
+	// даём задержку, с интервалом 100ms за тик, но не более deadline, чтобы обработать оставшиеся сообщения
+	for bc.currentBatch.Load() > 0 {
+		if time.Now().After(deadline) {
+			log.Printf("⚠️ Timeout (%v) waiting for pending messages, forcing shutdown", timeout)
+			break
+		}
+		log.Printf("⏳ Waiting for %d messages to complete processing...", bc.currentBatch.Load())
+		time.Sleep(100 * time.Millisecond)
+	}
 
 	// Закрываем Kafka клиент
 	bc.client.Close()
 
-	log.Printf("📊 Final statistics: processed=%d, dlq=%d",
-		bc.messagesProcessed.Load(), bc.messagesDLQ.Load())
+	// Закрываем DLQ producer если есть
+	if bc.dlq != nil {
+		if err := bc.dlq.Close(); err != nil {
+			log.Printf("⚠️ Error closing DLQ: %v", err)
+		}
+	}
+
+	log.Printf("📊 Final statistics: processed=%d, dlq=%d", bc.messagesProcessed.Load(), bc.messagesDLQ.Load())
 }
 
 // GetStats - возвращает статистику
