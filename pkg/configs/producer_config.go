@@ -8,7 +8,7 @@ import (
 )
 
 // ProducerConfig - минимальная конфигурация продюсера для kafka-go
-type ProducerConfig struct {
+type ProducerConfigKafkaGo struct {
 	KafkaConfig      `yaml:",inline"`
 	ProducerSpecific ProducerSpecificConfig `yaml:"producer" json:"producer"`
 }
@@ -21,8 +21,8 @@ type ProducerSpecificConfig struct {
 	Async        bool   `yaml:"async" json:"async"`                 // асинхронная отправка
 }
 
-func DefaultProducerConfig() *ProducerConfig {
-	return &ProducerConfig{
+func DefaultProducerConfigKafkaGo() *ProducerConfigKafkaGo {
+	return &ProducerConfigKafkaGo{
 		KafkaConfig: *DefaultKafkaConfig(),
 		ProducerSpecific: ProducerSpecificConfig{
 			Enabled:      true,
@@ -34,7 +34,7 @@ func DefaultProducerConfig() *ProducerConfig {
 	}
 }
 
-func (c *ProducerConfig) ToKafkaWriterConfig() kafka.WriterConfig {
+func (c *ProducerConfigKafkaGo) ToKafkaWriterConfig() kafka.WriterConfig {
 	return kafka.WriterConfig{
 		Brokers:          c.Brokers,
 		Topic:            c.Topic,
@@ -48,7 +48,7 @@ func (c *ProducerConfig) ToKafkaWriterConfig() kafka.WriterConfig {
 	}
 }
 
-func (c *ProducerConfig) Validate() error {
+func (c *ProducerConfigKafkaGo) Validate() error {
 	if len(c.Brokers) == 0 {
 		return fmt.Errorf("brokers list cannot be empty")
 	}
@@ -69,8 +69,8 @@ func (c *ProducerConfig) Validate() error {
 	return nil
 }
 
-func LoadProducerConfig(configPath string) (*ProducerConfig, error) {
-	return LoadYAMLConfig[ProducerConfig](configPath, DefaultProducerConfig)
+func LoadProducerConfig(configPath string) (*ProducerConfigKafkaGo, error) {
+	return LoadYAMLConfig[ProducerConfigKafkaGo](configPath, DefaultProducerConfigKafkaGo)
 }
 
 // Вспомогательные функции
