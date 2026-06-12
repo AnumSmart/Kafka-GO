@@ -1,0 +1,11 @@
+# Расширенные настройки DLQ менеджера
+async_mode: true
+queue_size: 20000
+workers: 5
+batch_size: 200
+flush_timeout: 60s
+max_retries: 5
+retry_backoff: 200ms
+fallback_enabled: true
+fallback_log_path: 'somePath'
+service_name: 'some-consumer'
