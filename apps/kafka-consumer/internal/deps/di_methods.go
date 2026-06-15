@@ -106,7 +106,7 @@ func (c *Container) initDLQManager(ctx context.Context) error {
 	// Проверяем, включен ли DLQ
 	if !kafkaCfg.Producer.DLQ.Enabled {
 		log.Println("DLQ is disabled, creating no-op DLQ manager")
-		c.dlqSender = franzgoconsumer.NewDLQManager(nil, "", false)
+		c.dlqSender = franzgoconsumer.NewDLQManager(nil, "", nil)
 		return nil
 	}
 
@@ -117,7 +117,7 @@ func (c *Container) initDLQManager(ctx context.Context) error {
 	c.dlqSender = franzgoconsumer.NewDLQManager(
 		c.consumerKafkaClient, // Тот же клиент!
 		dlqTopic,              // Например: "orders-topic.dlq"
-		true,                  // DLQ включен
+		c.config.DlqConfig,    // DLQ конфиг
 	)
 
 	log.Printf("✅ DLQ manager initialized (topic: %s)", dlqTopic)
@@ -147,9 +147,6 @@ func (c *Container) initMessageHandler(ctx context.Context) error {
 func (c *Container) initConsumer(ctx context.Context) error {
 	log.Println("Initializing Kafka consumer...")
 
-	// Получаем конфигурацию
-	kafkaCfg := c.config.GetKafkaClientConfig()
-
 	// Создаем хранилище сообщений
 	store := consumer.NewMessageStore(storageVolume)
 
@@ -158,9 +155,8 @@ func (c *Container) initConsumer(ctx context.Context) error {
 		c.consumerKafkaClient, // ОДИН клиент для всего
 		store,
 		c.idempotencyCache,
-		kafkaCfg.GetDLQTopic(),  // DLQ топик из конфига
-		kafkaCfg.IsDLQEnabled(), // Включен ли DLQ из конфига
-		true,                    // debug enabled
+		c.dlqSender,
+		true, // debug enabled
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create simple consumer: %w", err)
