@@ -23,8 +23,7 @@ func NewSimpleConsumer(
 	kafkaClient *kgo.Client,
 	store *MessageStore,
 	idempotencyCache *idempotency.IdempotencyCache,
-	dlqTopic string,
-	dlqEnabled bool,
+	dlqManager kafka.DLQSender,
 	debugEnabled bool,
 ) (kafka.Consumer, error) {
 
@@ -37,13 +36,6 @@ func NewSimpleConsumer(
 			sh.SetDebug(true)
 		}
 	}
-
-	// Создаём DLQ менеджер с ТЕМ ЖЕ клиентом
-	dlqManager := franzgoconsumer.NewDLQManager(
-		kafkaClient,
-		dlqTopic,
-		dlqEnabled,
-	)
 
 	// Настраиваем опции
 	consumerOpts := franzgoconsumer.DefaultOptions()
