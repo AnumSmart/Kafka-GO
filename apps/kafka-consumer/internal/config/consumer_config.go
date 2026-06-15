@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"pkg/configs"
+	franzgoconsumer "pkg/kafka/franz-go-consumer"
 
 	g "github.com/joho/godotenv"
 )
@@ -13,8 +14,9 @@ const (
 )
 
 type ConsumerServiceConfig struct {
-	KafkaClientConfig *configs.KafkaClientConfig
-	RedisConf         *configs.RedisConfig // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
+	KafkaClientConfig *configs.KafkaClientConfig        // конфиг для клиента
+	DlqConfig         *franzgoconsumer.DLQManagerConfig // конфиг для dlq
+	RedisConf         *configs.RedisConfig              // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
 }
 
 // загружаем конфиг-данные из .env
@@ -35,7 +37,7 @@ func LoadConfig() (*ConsumerServiceConfig, error) {
 	// загружаем данные из .yml файла для consumerConfig
 	kafkaClientConfig, err := configs.LoadKafkaClientConfig(yamlKafkaClientConfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
+		return nil, fmt.Errorf("Error during loading config [kafka client config]: %s\n", err.Error())
 	}
 
 	// валидируем загруженный конфиг продьюссера
@@ -44,14 +46,27 @@ func LoadConfig() (*ConsumerServiceConfig, error) {
 		return nil, fmt.Errorf("Error during validation of consumer config: %s\n", err.Error())
 	}
 
+	// проверка, что указан путь к .yml файлу
+	dlqConfigPath := os.Getenv("DLQ_MANAGER_CONFIG_ADDRESS_STRING")
+	if dlqConfigPath == "" {
+		// Если переменная окружения не задана - предупреждение, но можно продолжить
+		fmt.Println("WARNING: DLQ_CONFIG_ADDRESS_STRING is not set, using default config")
+	}
+
+	dlqManagerConfig, err := configs.LoadYAMLConfig[franzgoconsumer.DLQManagerConfig](dlqConfigPath, franzgoconsumer.DefaultDLQManagerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("Error during loading config [dlq manager config]: %s\n", err.Error())
+	}
+
 	// загружаем данные из .env файла для redisConfig
 	redisConfig, err := configs.NewRedisConfigFromEnv("REDIS_CACHE")
 	if err != nil {
-		return nil, fmt.Errorf("Error during loading config: %s\n", err.Error())
+		return nil, fmt.Errorf("Error during loading config [redis config]: %s\n", err.Error())
 	}
 
 	return &ConsumerServiceConfig{
 		KafkaClientConfig: kafkaClientConfig,
+		DlqConfig:         dlqManagerConfig,
 		RedisConf:         redisConfig,
 	}, nil
 }
