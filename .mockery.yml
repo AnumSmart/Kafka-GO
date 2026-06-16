@@ -1,0 +1,4 @@
+# .mockery.yaml
+with-expecter: true
+srcpkg: 'C:\\Users\\aliaksei.makarevich\\go\\KAFKA\\KafkaGo\\pkg\\kafka'
+all: true
