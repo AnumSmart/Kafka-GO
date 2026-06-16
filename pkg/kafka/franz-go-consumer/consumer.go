@@ -2,6 +2,7 @@ package franzgoconsumer
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync/atomic"
 	"time"
@@ -102,6 +103,13 @@ func (bc *BaseConsumer) Start(ctx context.Context) error {
 
 // 🆕 Выносим логику обработки в отдельный метод
 func (bc *BaseConsumer) pollAndProcessMessages(ctx context.Context) {
+	// Проверяем контекст до вызова Poll
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
 	// Устанавливаем таймаут для poll, чтобы не блокировать надолго
 	// Это позволит быстрее реагировать на shutdown
 	pollCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
@@ -141,7 +149,11 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 
 	// 🆕 Устанавливаем счетчик активных сообщений
 	bc.currentBatch.Store(int64(len(records)))
-	defer bc.currentBatch.Store(0) // После обработки сбрасываем
+	// этот дефер вызовется с теми значениями, которые будут при завершении этой функции
+	// или успешное завершение или gracefull shutdown
+	defer func() {
+		bc.currentBatch.Store(0) // После обработки сбрасываем
+	}()
 
 	successCount := 0
 
@@ -158,8 +170,8 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 		// Конвертируем kgo.Record в общую модель kafka.Message
 		msg := ToKafkaMessage(record)
 
-		// Вызываем бизнес-обработчик с общей моделью
-		if err := bc.handler.HandleMessage(ctx, msg); err != nil {
+		// Вызываем бизнес-обработчик с общей моделью (безопасно, перехватываем панику)
+		if err := bc.processMessageSafely(ctx, record, msg); err != nil {
 			bc.handleProcessingError(ctx, msg, err)
 			bc.currentBatch.Add(-1)
 			continue // после обработки сообщения переходим к следующему в цикле
@@ -193,6 +205,17 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 	return successCount
 }
 
+// метод для безопасного вызова хэндлера, если он запаникует на определённом сообщении, то это не положит консьюмер
+func (bc *BaseConsumer) processMessageSafely(ctx context.Context, record *kgo.Record, msg *kafka.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in handler for record: %v", r)
+			log.Printf("💥 Recovered from panic: %v", r)
+		}
+	}()
+	return bc.handler.HandleMessage(ctx, msg)
+}
+
 // handleProcessingError - обрабатывает ошибку обработки сообщения
 func (bc *BaseConsumer) handleProcessingError(ctx context.Context, msg *kafka.Message, err error) {
 	log.Printf("❌ Error processing message: topic=%s, partition=%d, offset=%d, error=%v",
@@ -221,7 +244,7 @@ func (bc *BaseConsumer) handleFetchErrors(errs []kgo.FetchError) {
 // commitOffsets - коммитит оффсеты (только при ручном режиме)
 func (bc *BaseConsumer) commitOffsets(ctx context.Context, batchSize int) {
 	// Если установлен интервал авто-коммита или батч пустой - пропускаем
-	if bc.options.CommitInterval != 0 || batchSize == 0 {
+	if bc.options.CommitInterval > 0 || batchSize == 0 {
 		return
 	}
 
