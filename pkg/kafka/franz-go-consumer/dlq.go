@@ -36,6 +36,8 @@ type dlqManager struct {
 	sentCount    atomic.Int64
 	failedCount  atomic.Int64
 	droppedCount atomic.Int64
+	// статус мэнеджера
+	closed atomic.Bool
 }
 
 // NewDLQManager - конструктор асинхронного DLQ менеджера
@@ -118,55 +120,75 @@ func (dm *dlqManager) Send(ctx context.Context, originalMsg *kafka.Message, hand
 func (dm *dlqManager) worker(workerID int) {
 	defer dm.wg.Done()
 
-	log.Printf("🔄 DLQ worker %d started", workerID)
-
-	// Бачтинг для эффективности
 	batch := make([]*dlqMessage, 0, dm.config.BatchSize)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop() // очищаем ресурсы, останавливаем тикер
-
-	// внутренний колбэк
-	flush := func() {
-		if len(batch) == 0 {
-			return
-		}
-		dm.sendBatch(batch, workerID)
-		batch = batch[:0] //создает новый срез с длиной 0, но с той же capacity, это очистка батча
-	}
+	ticker := time.NewTicker(100 * time.Millisecond) // хардкжим интервал
+	defer ticker.Stop()                              // освобождаем ресурсы
 
 	for {
 		select {
-		// реакция на сигнал остановки
 		case <-dm.stopCh:
-			log.Printf("🛑 DLQ worker %d received stop signal, flushing %d messages", workerID, len(batch))
-			flush()
-			log.Printf("✅ DLQ worker %d stopped", workerID)
+			batch = dm.drainAndFlush(batch, workerID) // Возвращаем новый слайс
 			return
-			// периодически по тикеру сливаем сообщения
-		case <-ticker.C:
-			// Периодический флаш
-			flush()
 
-			// накапливаем сообщения в батче, если можно читать из канала
+		case <-ticker.C:
+			batch = dm.flushBatch(batch, workerID) // Возвращаем новый слайс
+
 		case msg, ok := <-dm.msgCh:
 			if !ok {
-				flush()
+				batch = dm.flushBatch(batch, workerID)
 				return
 			}
 
 			batch = append(batch, msg)
 			dm.pendingCount.Add(-1)
 
-			// Флаш при заполнении батча
 			if len(batch) >= dm.config.BatchSize {
-				flush()
+				batch = dm.flushBatch(batch, workerID)
 			}
+		}
+	}
+}
+
+// flushBatch - отправляет батч и возвращает пустой слайс
+func (dm *dlqManager) flushBatch(batch []*dlqMessage, workerID int) []*dlqMessage {
+	if len(batch) == 0 {
+		return batch // Возвращаем тот же слайс
+	}
+
+	dm.sendBatch(batch, workerID)
+	return batch[:0] // Возвращаем очищенный слайс
+}
+
+// drainAndFlush - вычитывает все оставшиеся сообщения
+func (dm *dlqManager) drainAndFlush(batch []*dlqMessage, workerID int) []*dlqMessage {
+	for {
+		select {
+		case msg, ok := <-dm.msgCh:
+			if !ok {
+				return dm.flushBatch(batch, workerID)
+			}
+
+			batch = append(batch, msg)
+			dm.pendingCount.Add(-1)
+
+			if len(batch) >= dm.config.BatchSize {
+				batch = dm.flushBatch(batch, workerID)
+			}
+		default:
+			return dm.flushBatch(batch, workerID)
 		}
 	}
 }
 
 // sendBatch - отправка батча сообщений в Kafka
 func (dm *dlqManager) sendBatch(batch []*dlqMessage, workerID int) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("💥 DLQ worker %d panic in sendBatch: %v", workerID, r)
+			dm.failedCount.Add(int64(len(batch)))
+		}
+	}()
+
 	if len(batch) == 0 {
 		return
 	}
@@ -216,6 +238,7 @@ func (dm *dlqManager) sendBatch(batch []*dlqMessage, workerID int) {
 
 // sendWithRetries - отправка с ретраями
 func (dm *dlqManager) sendWithRetries(records []*kgo.Record, workerID int) {
+	var errs []error
 	var lastErr error
 
 	for retry := 0; retry <= dm.config.MaxRetries; retry++ {
@@ -228,31 +251,32 @@ func (dm *dlqManager) sendWithRetries(records []*kgo.Record, workerID int) {
 		// Создаем контекст с таймаутом
 		ctx, cancel := context.WithTimeout(context.Background(), dm.config.SendTimeout)
 
-		// Пробуем отправить синхронно
-		var err error
-		for _, record := range records {
-			if produceErr := dm.producer.ProduceSync(ctx, record).FirstErr(); produceErr != nil {
-				err = produceErr
-				break
+		// Отправляем все сообщения
+		produceResults := dm.producer.ProduceSync(ctx, records...)
+		cancel()
+
+		// Собираем ошибки
+		errs = nil
+		for _, result := range produceResults {
+			if result.Err != nil {
+				errs = append(errs, result.Err)
 			}
 		}
 
-		cancel()
-
-		if err == nil {
-			// Успешно
-			return
+		if len(errs) == 0 {
+			return // Все успешно
 		}
 
-		lastErr = err
-		log.Printf("❌ DLQ worker %d: send failed (retry %d/%d): %v",
-			workerID, retry, dm.config.MaxRetries, err)
+		log.Printf("❌ DLQ worker %d: send failed (retry %d/%d): %d errors",
+			workerID, retry, dm.config.MaxRetries, len(errs))
+
+		lastErr = errs[len(errs)-1]
 	}
 
 	// Все ретраи исчерпаны
 	dm.failedCount.Add(int64(len(records)))
-	log.Printf("💀 DLQ worker %d: FAILED to send %d messages after %d retries: %v",
-		workerID, len(records), dm.config.MaxRetries, lastErr)
+	log.Printf("💀 DLQ worker %d: FAILED to send %d messages after %d",
+		workerID, len(records), dm.config.MaxRetries)
 
 	// Записываем в fallback лог, если включен
 	if dm.config.FallbackEnabled && dm.config.FallbackLogPath != "" {
@@ -283,6 +307,9 @@ func (dm *dlqManager) Close() error {
 	// Останавливаем приём новых сообщений
 	close(dm.stopCh)
 
+	// Закрываем канал сообщений (после stopCh, чтобы воркеры успели обработать)
+	close(dm.msgCh)
+
 	// Ждём завершения всех воркеров с таймаутом
 	done := make(chan struct{})
 	go func() {
@@ -306,12 +333,17 @@ func (dm *dlqManager) Close() error {
 		dm.failedCount.Load(),
 		dm.droppedCount.Load())
 
+	dm.closed.Store(true) // выставляем флаг, о том, что мэнеджер закрыт
+
 	return nil
 }
 
 // IsEnabled - возвращает статус DLQ (реализация kafka.DLQSender)
 func (dm *dlqManager) IsEnabled() bool {
-	return dm.config.Enabled && dm.producer != nil && dm.topic != ""
+	return dm.config.Enabled &&
+		dm.producer != nil &&
+		dm.topic != "" &&
+		!dm.closed.Load()
 }
 
 // Stats - возвращает статистику для мониторинга
