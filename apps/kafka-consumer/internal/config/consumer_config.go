@@ -5,6 +5,7 @@ import (
 	"os"
 	"pkg/configs"
 	franzgoconsumer "pkg/kafka/franz-go-consumer"
+	"pkg/logger"
 
 	g "github.com/joho/godotenv"
 )
@@ -17,6 +18,7 @@ type ConsumerServiceConfig struct {
 	KafkaClientConfig *configs.KafkaClientConfig        // конфиг для клиента
 	DlqConfig         *franzgoconsumer.DLQManagerConfig // конфиг для dlq
 	RedisConf         *configs.RedisConfig              // конфиг для экземпляра REDIS (cache) (загружается в шаблон из pkg, данные берутся из .env файла)
+	LoggerConfig      *logger.LoggerConfig
 }
 
 // загружаем конфиг-данные из .env
@@ -58,6 +60,18 @@ func LoadConfig() (*ConsumerServiceConfig, error) {
 		return nil, fmt.Errorf("Error during loading config [dlq manager config]: %s\n", err.Error())
 	}
 
+	// проверка, что указан путь к .yml файлу
+	loggerConfigPath := os.Getenv("LOGGER_CONFIG_ADDRESS_STRING")
+	if dlqConfigPath == "" {
+		// Если переменная окружения не задана - предупреждение, но можно продолжить
+		fmt.Println("WARNING: LOGGER_ADDRESS_STRING is not set, using default config")
+	}
+
+	loggerConfig, err := configs.LoadYAMLConfig[logger.LoggerConfig](loggerConfigPath, logger.DefaultLoggerConfig)
+	if err != nil {
+		return nil, fmt.Errorf("Error during loading config [logger config]: %s\n", err.Error())
+	}
+
 	// загружаем данные из .env файла для redisConfig
 	redisConfig, err := configs.NewRedisConfigFromEnv("REDIS_CACHE")
 	if err != nil {
@@ -68,6 +82,7 @@ func LoadConfig() (*ConsumerServiceConfig, error) {
 		KafkaClientConfig: kafkaClientConfig,
 		DlqConfig:         dlqManagerConfig,
 		RedisConf:         redisConfig,
+		LoggerConfig:      loggerConfig,
 	}, nil
 }
 
