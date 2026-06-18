@@ -8,7 +8,8 @@ import (
 	"kafka_consumer/internal/config"
 	"kafka_consumer/internal/idempotency"
 
-	"log"
+	"log/slog"
+
 	"pkg/kafka"
 	"sync"
 
@@ -19,11 +20,13 @@ type Container struct {
 	// ==================== КОНФИГУРАЦИЯ ====================
 	config *config.ConsumerServiceConfig
 
+	// ====================== ЛОГГЕР =======================
+	logger *slog.Logger
 	// ==================== KAFKA CONSUMER =================
 	consumerKafkaClient *kgo.Client    // ✅ ОДИН клиент для всего (consumer + producer для DLQ)
 	consumer            kafka.Consumer // используем интерфейс вместо конкретной реализации
 
-	// ==================== DLQ ============================
+	// ==================== DLQ =============================
 	dlqSender kafka.DLQSender // DLQ менеджер
 
 	// ==================== HANDLERS ========================
@@ -50,6 +53,14 @@ func NewContainer(ctx context.Context, cfg *config.ConsumerServiceConfig) (*Cont
 		config:  cfg,
 		closers: make([]func() error, 0),
 	}
+
+	// инициализируем логгер
+	if err := c.initLogger(ctx); err != nil {
+		return nil, fmt.Errorf("init logger: %w", err)
+	}
+
+	log := c.logger
+	log.Info("starting DI container initialization")
 
 	// 1. Инициализация единого Kafka клиента
 	if err := c.initKafkaClient(ctx); err != nil {
@@ -86,6 +97,6 @@ func NewContainer(ctx context.Context, cfg *config.ConsumerServiceConfig) (*Cont
 		return nil, fmt.Errorf("init consumer: %w", err)
 	}
 
-	log.Println("✅ DI container initialized successfully with single Kafka client")
+	log.Info("✅ DI container initialized successfully with single Kafka client")
 	return c, nil
 }

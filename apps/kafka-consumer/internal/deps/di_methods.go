@@ -6,11 +6,13 @@ import (
 	"kafka_consumer/internal/consumer"
 	"kafka_consumer/internal/idempotency"
 
+	"log/slog"
 	"time"
 
 	"log"
 	"pkg/kafka"
 	franzgoconsumer "pkg/kafka/franz-go-consumer"
+	"pkg/logger"
 	"pkg/redis"
 
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -25,7 +27,29 @@ func (c *Container) addCloser(closer func() error) {
 	c.closers = append(c.closers, closer)
 }
 
-// ✅ НОВЫЙ МЕТОД: initKafkaClient - создает ЕДИНЫЙ Kafka клиент
+// initLogger - создаёт единый логгер
+func (c *Container) initLogger(ctx context.Context) error {
+	// Инициализируем глобальный синглтон для этого микросервиса
+	logger.InitLogger(c.config.LoggerConfig)
+
+	// Получаем экземпляр логгера
+	c.logger = logger.GetLogger()
+
+	// Проверяем, что логгер инициализирован
+	if c.logger == nil {
+		return fmt.Errorf("failed to initialize logger")
+	}
+
+	c.logger.Info("logger initialized",
+		"level", c.config.LoggerConfig.Level,
+		"format", c.config.LoggerConfig.Format,
+		"service", c.config.LoggerConfig.Service,
+	)
+
+	return nil
+}
+
+// ✅ МЕТОД: initKafkaClient - создает ЕДИНЫЙ Kafka клиент
 func (c *Container) initKafkaClient(ctx context.Context) error {
 	log.Println("Initializing single Kafka client (consumer + producer)...")
 
@@ -42,12 +66,16 @@ func (c *Container) initKafkaClient(ctx context.Context) error {
 	}
 
 	c.consumerKafkaClient = kafkaClient
-	log.Println("✅ Single Kafka client initialized (consumer + producer)")
+	c.logger.Info("✅ Kafka client initialized",
+		"brokers", c.config.GetBrokers(),
+		"topic", c.config.GetTopic(),
+		"group", c.config.GetGroupID(),
+	)
 
 	// Регистрируем закрытие клиента
 	c.addCloser(func() error {
 		c.consumerKafkaClient.Close()
-		log.Println("Kafka client connection closed")
+		c.logger.Info("Kafka client closed")
 		return nil
 	})
 
@@ -56,7 +84,7 @@ func (c *Container) initKafkaClient(ctx context.Context) error {
 
 // ✅ НОВЫЙ МЕТОД: initRedisClient - создает Redis клиент
 func (c *Container) initRedisClient(ctx context.Context) error {
-	log.Println("Initializing Redis client...")
+	c.logger.Info("initializing Redis client...")
 
 	redisClient, err := redis.NewRedisCacheRepository(ctx, c.config.RedisConf)
 	if err != nil {
@@ -64,12 +92,14 @@ func (c *Container) initRedisClient(ctx context.Context) error {
 	}
 
 	c.redisClient = redisClient
-	log.Println("✅ Redis client initialized")
+	c.logger.Info("✅ Redis client initialized",
+		"host", c.config.RedisConf.Host,
+	)
 
 	// Регистрируем закрытие клиента
 	c.addCloser(func() error {
 		c.redisClient.Close()
-		log.Println("Redis client connection closed")
+		c.logger.Info("Redis client closed")
 		return nil
 	})
 
@@ -78,7 +108,7 @@ func (c *Container) initRedisClient(ctx context.Context) error {
 
 // initIdempotencyCache - инициализация кэша для идемпотентности
 func (c *Container) initIdempotencyCache(ctx context.Context) error {
-	log.Println("Initializing idempotency cache...")
+	c.logger.Info("initializing idempotency cache...")
 
 	cache, err := idempotency.NewIdempotencyCache(
 		c.redisClient,
@@ -95,7 +125,7 @@ func (c *Container) initIdempotencyCache(ctx context.Context) error {
 	}
 
 	c.idempotencyCache = cache
-	log.Println("✅ Idempotency cache initialized")
+	c.logger.Info("✅ Idempotency cache initialized")
 	return nil
 }
 
@@ -105,12 +135,12 @@ func (c *Container) initDLQManager(ctx context.Context) error {
 
 	// Проверяем, включен ли DLQ
 	if !kafkaCfg.Producer.DLQ.Enabled {
-		log.Println("DLQ is disabled, creating no-op DLQ manager")
+		c.logger.Info("DLQ is disabled, using no-op DLQ manager")
 		c.dlqSender = franzgoconsumer.NewDLQManager(nil, "", nil)
 		return nil
 	}
 
-	log.Println("Initializing DLQ manager...")
+	c.logger.Info("initializing DLQ manager...")
 
 	// Создаем DLQ менеджер с ТЕМ ЖЕ клиентом
 	dlqTopic := kafkaCfg.GetDLQTopic()
@@ -120,13 +150,13 @@ func (c *Container) initDLQManager(ctx context.Context) error {
 		c.config.DlqConfig,    // DLQ конфиг
 	)
 
-	log.Printf("✅ DLQ manager initialized (topic: %s)", dlqTopic)
+	c.logger.Info("✅ DLQ manager initialized", "topic", dlqTopic)
 	return nil
 }
 
 // initMessageHandler - инициализация бизнес-обработчика сообщений
 func (c *Container) initMessageHandler(ctx context.Context) error {
-	log.Println("Initializing message handler...")
+	c.logger.Info("initializing message handler...")
 
 	// Создаем хранилище сообщений
 	store := consumer.NewMessageStore(storageVolume)
@@ -139,13 +169,13 @@ func (c *Container) initMessageHandler(ctx context.Context) error {
 	)
 
 	c.messageHandler = handler
-	log.Println("✅ Message handler initialized")
+	c.logger.Info("✅ Message handler initialized", "storage_volume", storageVolume)
 	return nil
 }
 
 // initConsumer - инициализация consumer (обновленный)
 func (c *Container) initConsumer(ctx context.Context) error {
-	log.Println("Initializing Kafka consumer...")
+	c.logger.Info("initializing Kafka consumer...")
 
 	// Создаем хранилище сообщений
 	store := consumer.NewMessageStore(storageVolume)
@@ -167,11 +197,11 @@ func (c *Container) initConsumer(ctx context.Context) error {
 	// Добавляем в closers
 	c.addCloser(func() error {
 		c.consumer.Shutdown()
-		log.Println("Consumer resources cleaned up")
+		c.logger.Info("Consumer resources cleaned up")
 		return nil
 	})
 
-	log.Println("✅ Kafka consumer initialized")
+	c.logger.Info("✅ Kafka consumer initialized")
 	return nil
 }
 
@@ -201,7 +231,7 @@ func (c *Container) getConsumerOptions() *franzgoconsumer.ConsumerOptions {
 // Close - закрытие всех ресурсов
 func (c *Container) Close() error {
 	c.closeOnce.Do(func() {
-		log.Println("🛑 Closing DI container resources...")
+		c.logger.Info("🛑 Closing DI container resources...")
 
 		var errs []error
 
@@ -215,7 +245,7 @@ func (c *Container) Close() error {
 		if len(errs) > 0 {
 			c.closeErr = fmt.Errorf("close errors: %v", errs)
 		} else {
-			log.Println("✅ Container resources closed successfully")
+			c.logger.Info("✅ Container resources closed successfully")
 		}
 	})
 
@@ -237,4 +267,8 @@ func (c *Container) GetDLQSender() kafka.DLQSender {
 
 func (c *Container) GetIdempotencyCache() *idempotency.IdempotencyCache {
 	return c.idempotencyCache
+}
+
+func (c *Container) GetLogger() *slog.Logger {
+	return c.logger
 }
