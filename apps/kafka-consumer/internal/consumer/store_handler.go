@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"kafka_consumer/internal/idempotency"
 
-	"log"
 	"pkg/kafka"
+	"pkg/logger"
 	"time"
 )
 
@@ -37,13 +37,28 @@ func (h *StoreHandler) SetDebug(debug bool) {
 
 // HandleMessage – реализация интерфейса kafka.MessageHandler с идемпотентностью
 func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) error {
+	// Получаем логгер (синглтон)
+	log := logger.GetLogger()
+
+	// Логируем начало обработки
+	log.InfoContext(ctx, "processing message",
+		"topic", msg.Topic,
+		"partition", msg.Partition,
+		"offset", msg.Offset,
+		"key", string(msg.Key),
+	)
 	// Парсим EventID из Value
 	var envelope struct {
 		EventID string `json:"event_id"`
 	}
 	if err := json.Unmarshal(msg.Value, &envelope); err != nil {
 		if h.debug {
-			log.Printf("⚠️ Failed to parse EventID from message: %v", err)
+			log.WarnContext(ctx, "failed to parse EventID from message, skipping idempotency check",
+				"error", err,
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		}
 		// fail-open: сохраняем без проверки идемпотентности
 		return h.saveMessage(msg)
@@ -51,7 +66,11 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 
 	if envelope.EventID == "" {
 		if h.debug {
-			log.Printf("⚠️ Message without EventID, skipping idempotency check")
+			log.DebugContext(ctx, "message without EventID, skipping idempotency check",
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		}
 		return h.saveMessage(msg)
 	}
@@ -60,34 +79,68 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	// ✅ Используем правильный метод IsProcessed
 	exists, err := h.cache.IsProcessed(ctx, envelope.EventID)
 	if err != nil {
-		// Ошибка Redis – fail‑open: сохраняем сообщение, но логируем
-		log.Printf("⚠️ Redis check failed for EventID=%s: %v, saving message anyway", envelope.EventID, err)
+		// Ошибка Redis – fail‑open: сохраняем сообщение, но логируем ошибку
+		log.ErrorContext(ctx, "Redis check failed, saving message anyway (fail-open)",
+			"event_id", envelope.EventID,
+			"error", err,
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+		)
 		return h.saveMessage(msg)
 	}
 
 	if exists {
 		if h.debug {
-			log.Printf("⏭️ Duplicate event skipped: EventID=%s, Topic=%s, Partition=%d, Offset=%d",
-				envelope.EventID, msg.Topic, msg.Partition, msg.Offset)
+			log.DebugContext(ctx, "duplicate event skipped (idempotency)",
+				"event_id", envelope.EventID,
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		}
 		return nil // дубликат – не сохраняем
 	}
 
 	// === Сохранение сообщения ===
 	if err := h.saveMessage(msg); err != nil {
+		log.ErrorContext(ctx, "failed to save message",
+			"event_id", envelope.EventID,
+			"error", err,
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+		)
 		return err
 	}
 
 	// === Отметка в Redis как обработанное ===
 	// ✅ Используем правильный метод MarkProcessed
 	if err := h.cache.MarkProcessed(ctx, envelope.EventID); err != nil {
-		log.Printf("⚠️ Failed to mark event %s as processed: %v", envelope.EventID, err)
+		log.WarnContext(ctx, "failed to mark event as processed in Redis",
+			"event_id", envelope.EventID,
+			"error", err,
+		)
+		// Не возвращаем ошибку, т.к. сообщение уже сохранено
+		// Но можно добавить метрику или алерт
 	}
 
 	if h.debug {
-		log.Printf("✅ Event processed: EventID=%s, Topic=%s, Offset=%d",
-			envelope.EventID, msg.Topic, msg.Offset)
+		log.DebugContext(ctx, "event processed successfully",
+			"event_id", envelope.EventID,
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+		)
 	}
+
+	log.InfoContext(ctx, "message processed successfully",
+		"event_id", envelope.EventID,
+		"topic", msg.Topic,
+		"partition", msg.Partition,
+		"offset", msg.Offset,
+	)
+
 	return nil
 }
 
@@ -106,6 +159,7 @@ func (h *StoreHandler) saveMessage(msg *kafka.Message) error {
 // OnBatchProcessed – вызывается после обработки батча
 func (h *StoreHandler) OnBatchProcessed(batchSize int) {
 	if h.debug {
-		log.Printf("📊 Batch processed: %d messages", batchSize)
+		log := logger.GetLogger()
+		log.Info("batch processed", "batch_size", batchSize)
 	}
 }
