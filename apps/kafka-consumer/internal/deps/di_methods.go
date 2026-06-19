@@ -159,13 +159,14 @@ func (c *Container) initMessageHandler(ctx context.Context) error {
 	c.logger.Info("initializing message handler...")
 
 	// Создаем хранилище сообщений
-	store := consumer.NewMessageStore(storageVolume)
+	store := consumer.NewMessageStore(storageVolume, c.logger)
 
 	// Создаем обработчик с поддержкой идемпотентности
 	// TODO: реализовать StoreHandler, который принимает idempotencyCache и store
 	handler := consumer.NewStoreHandler(
 		store,
 		c.idempotencyCache,
+		c.logger,
 	)
 
 	c.messageHandler = handler
@@ -178,10 +179,11 @@ func (c *Container) initConsumer(ctx context.Context) error {
 	c.logger.Info("initializing Kafka consumer...")
 
 	// Создаем хранилище сообщений
-	store := consumer.NewMessageStore(storageVolume)
+	store := consumer.NewMessageStore(storageVolume, c.logger)
 
 	// ✅ Создаем SimpleConsumer с ОДНИМ клиентом
 	simpleConsumer, err := consumer.NewSimpleConsumer(
+		c.logger,
 		c.consumerKafkaClient, // ОДИН клиент для всего
 		store,
 		c.idempotencyCache,
