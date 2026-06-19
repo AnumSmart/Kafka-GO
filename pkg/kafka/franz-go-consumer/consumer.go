@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -13,28 +14,34 @@ import (
 )
 
 // BaseConsumer - базовый consumer с DI зависимостями
-// Реализует интерфейс kafka.Consumer
+// Поля отсортированы по убыванию размера для минимизации padding
 type BaseConsumer struct {
-	client  KafkaClient
-	handler kafka.MessageHandler // используем общий интерфейс
-	dlq     kafka.DLQSender      // используем общий интерфейс
-	options *ConsumerOptions
+	// === КОНФИГУРАЦИЯ И СОСТОЯНИЕ (8+ байт) ===
+	statsPrintInterval time.Duration // 8 байт - интервал вывода статистики
+	lastStatsTime      time.Time     // 24 байта - время последней статистики
 
-	isShuttingDown atomic.Bool  // флаг, что consumer получил сигнал на остановку
-	currentBatch   atomic.Int64 // счетчик сообщений в текущей обработке
+	// === АТОМАРНЫЕ СЧЕТЧИКИ (8 байт каждый) ===
+	messagesProcessed atomic.Int64 // 8 байт - всего обработано
+	messagesDLQ       atomic.Int64 // 8 байт - всего в DLQ
+	currentBatch      atomic.Int64 // 8 байт - текущий батч
 
-	// статистика (атомарные для безопасности)
-	messagesProcessed atomic.Int64
-	messagesDLQ       atomic.Int64
+	// === ЗАВИСИМОСТИ (интерфейсы = 16 байт) ===
+	client  KafkaClient          // 16 байт - клиент Kafka
+	handler kafka.MessageHandler // 16 байт - обработчик
+	dlq     kafka.DLQSender      // 16 байт - отправитель DLQ
 
-	// внутренние
-	statsPrintInterval time.Duration
-	lastStatsTime      time.Time
+	// === УКАЗАТЕЛИ (8 байт каждый) ===
+	logger  *slog.Logger     // 8 байт - логгер
+	options *ConsumerOptions // 8 байт - опции
+
+	// === ФЛАГИ (1 байт каждый) ===
+	isShuttingDown atomic.Bool // 1 байт
+	// padding: 7 байт (для выравнивания структуры до 8 байт)
 }
 
 // NewBaseConsumer - конструктор для DI (все зависимости передаются извне)
 // принимаем интерфейсы в параметрах, возвращаем  реализацию
-func NewBaseConsumer(client KafkaClient, handler kafka.MessageHandler, dlq kafka.DLQSender, opts *ConsumerOptions) (*BaseConsumer, error) {
+func NewBaseConsumer(client KafkaClient, handler kafka.MessageHandler, dlq kafka.DLQSender, opts *ConsumerOptions, logger *slog.Logger) (*BaseConsumer, error) {
 	if client == nil {
 		return nil, ErrClientNotInitialized
 	}
@@ -46,11 +53,17 @@ func NewBaseConsumer(client KafkaClient, handler kafka.MessageHandler, dlq kafka
 	}
 	opts.Validate()
 
+	logger.Info("Creating BaseConsumer",
+		"stats_interval", opts.StatsPrintInterval,
+		"debug_enabled", opts.EnableDebugLog,
+	)
+
 	return &BaseConsumer{
 		client:             client,
 		handler:            handler,
 		dlq:                dlq,
 		options:            opts,
+		logger:             logger,
 		statsPrintInterval: opts.StatsPrintInterval,
 		lastStatsTime:      time.Now(),
 	}, nil
@@ -59,22 +72,24 @@ func NewBaseConsumer(client KafkaClient, handler kafka.MessageHandler, dlq kafka
 // Start - запуск основного цикла потребления
 // Реализует kafka.Consumer.Start
 func (bc *BaseConsumer) Start(ctx context.Context) error {
-	log.Println("🚀 Starting base consumer...")
+	bc.logger.Info("Starting BaseConsumer...",
+		"stats_interval", bc.statsPrintInterval,
+	)
 
 	iteration := 0
 
 	for {
-		// 🆕 Проверяем, не инициирован ли shutdown
+		// Проверяем, не инициирован ли shutdown
 		if bc.isShuttingDown.Load() {
-			log.Println("📋 Shutdown initiated, checking pending messages...")
-
-			// Если текущий батч пустой, выходим
-			if bc.currentBatch.Load() == 0 {
-				log.Println("✅ No pending messages, exiting")
+			pending := bc.currentBatch.Load()
+			if pending == 0 {
+				bc.logger.Info("No pending messages, exiting gracefully")
 				return nil
 			}
-			// Если есть сообщения в обработке, даем им время завершиться
-			log.Printf("⏳ Waiting for %d pending messages to complete...", bc.currentBatch.Load())
+
+			bc.logger.Debug("Waiting for pending messages to complete",
+				"pending_count", pending,
+			)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -82,7 +97,7 @@ func (bc *BaseConsumer) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			// 🆕 Не выходим сразу, а инициируем graceful shutdown
-			log.Println("🛑 Received shutdown signal, initiating graceful shutdown...")
+			bc.logger.Info("Received shutdown signal, initiating graceful shutdown...")
 			bc.isShuttingDown.Store(true)
 
 			// Продолжаем цикл, но уже в режиме завершения
@@ -92,8 +107,14 @@ func (bc *BaseConsumer) Start(ctx context.Context) error {
 		default:
 			// 🆕 Если не в режиме завершения, обрабатываем сообщения
 			if !bc.isShuttingDown.Load() {
-				iteration++
-				bc.logDebug(iteration%100 == 0, "💓 Consumer alive, iteration %d", iteration)
+				if iteration%100 == 0 {
+					bc.logger.Debug("Consumer alive",
+						"iteration", iteration,
+						"processed", bc.messagesProcessed.Load(),
+						"dlq", bc.messagesDLQ.Load(),
+					)
+				}
+
 				bc.pollAndProcessMessages(ctx)
 				bc.printStatsIfNeeded()
 			}
@@ -155,18 +176,24 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 		bc.currentBatch.Store(0) // После обработки сбрасываем
 	}()
 
+	bc.logger.Debug("Processing batch",
+		"batch_size", len(records),
+	)
+
 	successCount := 0
 
 	// пытаемся обработать весь батч сообщений
 	for _, record := range records {
-		// 🆕 Проверяем, не инициирован ли shutdown во время обработки
+		// Проверяем, не инициирован ли shutdown во время обработки
 		if bc.isShuttingDown.Load() {
-			log.Printf("⚠️ Shutdown in progress, stopping batch processing at %d/%d",
-				successCount, len(records))
-			// Не коммитим частично обработанный батч
-			// При следующем запуске сообщения будут обработаны заново
+			bc.logger.Warn("Shutdown in progress, stopping batch processing",
+				"processed", successCount,
+				"total", len(records),
+				"remaining", len(records)-successCount,
+			)
 			return successCount
 		}
+
 		// Конвертируем kgo.Record в общую модель kafka.Message
 		msg := ToKafkaMessage(record)
 
@@ -179,8 +206,15 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 
 		successCount++
 		bc.messagesProcessed.Add(1)
-		bc.logDebug(bc.options.EnableDebugLog, "📨 Received: topic=%s, offset=%d",
-			record.Topic, record.Offset)
+
+		if bc.options.EnableDebugLog {
+			bc.logger.Debug("Message processed",
+				"topic", record.Topic,
+				"partition", record.Partition,
+				"offset", record.Offset,
+				"key", string(record.Key),
+			)
+		}
 
 		// 🆕 Уменьшаем счетчик активных сообщений
 		bc.currentBatch.Add(-1)
@@ -190,15 +224,19 @@ func (bc *BaseConsumer) processFetchesWithShutdownTracking(ctx context.Context, 
 	if !bc.isShuttingDown.Load() {
 		bc.commitOffsets(ctx, len(records))
 	} else {
-		log.Printf("⚠️ Skipping commit during shutdown, messages will be reprocessed")
+		bc.logger.Warn("Skipping commit during shutdown, messages will be reprocessed",
+			"batch_size", len(records),
+		)
 	}
 
-	bc.logDebug(bc.options.EnableDebugLog && len(records) > 0,
-		"✅ Batch: %d total, %d success, %d errors",
-		len(records), successCount, len(records)-successCount)
+	if len(records) > 0 {
+		bc.logger.Info("Batch processed",
+			"total", len(records),
+			"success", successCount,
+			"errors", len(records)-successCount,
+		)
 
-	// метод пока в разработке--------------------------------------------------------------------- пустышка
-	if successCount > 0 {
+		// Вызываем хук после обработки батча (пока пустышка)
 		bc.handler.OnBatchProcessed(successCount)
 	}
 
@@ -210,7 +248,12 @@ func (bc *BaseConsumer) processMessageSafely(ctx context.Context, record *kgo.Re
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic in handler for record: %v", r)
-			log.Printf("💥 Recovered from panic: %v", r)
+			bc.logger.Error("Handler panicked",
+				"panic", r,
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		}
 	}()
 	return bc.handler.HandleMessage(ctx, msg)
@@ -218,26 +261,48 @@ func (bc *BaseConsumer) processMessageSafely(ctx context.Context, record *kgo.Re
 
 // handleProcessingError - обрабатывает ошибку обработки сообщения
 func (bc *BaseConsumer) handleProcessingError(ctx context.Context, msg *kafka.Message, err error) {
-	log.Printf("❌ Error processing message: topic=%s, partition=%d, offset=%d, error=%v",
-		msg.Topic, msg.Partition, msg.Offset, err)
+	bc.logger.Error("Failed to process message",
+		"error", err,
+		"topic", msg.Topic,
+		"partition", msg.Partition,
+		"offset", msg.Offset,
+		"key", msg.Key,
+	)
 
 	if bc.dlq != nil && bc.dlq.IsEnabled() {
 		// Отправляем в DLQ используя общую модель сообщения
 		if dlqErr := bc.dlq.Send(ctx, msg, err); dlqErr != nil {
-			log.Printf("⚠️ Failed to send to DLQ: %v", dlqErr)
+			bc.logger.Error("Failed to send to DLQ",
+				"error", dlqErr,
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		} else {
 			bc.messagesDLQ.Add(1)
+			bc.logger.Debug("Message sent to DLQ",
+				"topic", msg.Topic,
+				"partition", msg.Partition,
+				"offset", msg.Offset,
+			)
 		}
 	} else {
-		log.Printf("⚠️ DLQ disabled or not available, dropping failed message: offset=%d", msg.Offset)
+		bc.logger.Warn("DLQ disabled or not available, dropping failed message",
+			"topic", msg.Topic,
+			"partition", msg.Partition,
+			"offset", msg.Offset,
+		)
 	}
 }
 
 // handleFetchErrors - обрабатывает ошибки получения сообщений от Kafka
 func (bc *BaseConsumer) handleFetchErrors(errs []kgo.FetchError) {
 	for _, err := range errs {
-		log.Printf("❌ Fetch error: topic=%s, partition=%d, error=%v",
-			err.Topic, err.Partition, err.Err)
+		bc.logger.Error("Fetch error",
+			"error", err.Err,
+			"topic", err.Topic,
+			"partition", err.Partition,
+		)
 	}
 }
 
@@ -249,16 +314,21 @@ func (bc *BaseConsumer) commitOffsets(ctx context.Context, batchSize int) {
 	}
 
 	if err := bc.client.CommitUncommittedOffsets(ctx); err != nil {
-		log.Printf("⚠️ Failed to commit offsets: %v", err)
+		bc.logger.Error("Failed to commit offsets",
+			"error", err,
+			"batch_size", batchSize,
+		)
 	} else {
-		bc.logDebug(bc.options.EnableDebugLog, "💾 Committed offsets for %d messages", batchSize)
+		bc.logger.Debug("Offsets committed",
+			"batch_size", batchSize,
+		)
 	}
 }
 
 // Shutdown - завершение работы
 // Реализует kafka.Consumer.Shutdown
 func (bc *BaseConsumer) Shutdown() {
-	log.Println("🛑 Shutting down consumer gracefully...")
+	bc.logger.Info("Shutting down consumer gracefully...")
 
 	// 🆕 Инициируем graceful shutdown
 	bc.isShuttingDown.Store(true)
@@ -270,10 +340,15 @@ func (bc *BaseConsumer) Shutdown() {
 	// даём задержку, с интервалом 100ms за тик, но не более deadline, чтобы обработать оставшиеся сообщения
 	for bc.currentBatch.Load() > 0 {
 		if time.Now().After(deadline) {
-			log.Printf("⚠️ Timeout (%v) waiting for pending messages, forcing shutdown", timeout)
+			bc.logger.Warn("Timeout waiting for pending messages, forcing shutdown",
+				"timeout", timeout,
+				"pending", bc.currentBatch.Load(),
+			)
 			break
 		}
-		log.Printf("⏳ Waiting for %d messages to complete processing...", bc.currentBatch.Load())
+		bc.logger.Debug("Waiting for pending messages",
+			"pending", bc.currentBatch.Load(),
+		)
 		time.Sleep(100 * time.Millisecond)
 	}
 
@@ -283,11 +358,16 @@ func (bc *BaseConsumer) Shutdown() {
 	// Закрываем DLQ producer если есть
 	if bc.dlq != nil {
 		if err := bc.dlq.Close(); err != nil {
-			log.Printf("⚠️ Error closing DLQ: %v", err)
+			bc.logger.Error("Error closing DLQ",
+				"error", err,
+			)
 		}
 	}
 
-	log.Printf("📊 Final statistics: processed=%d, dlq=%d", bc.messagesProcessed.Load(), bc.messagesDLQ.Load())
+	bc.logger.Info("Consumer shutdown completed",
+		"processed", bc.messagesProcessed.Load(),
+		"dlq", bc.messagesDLQ.Load(),
+	)
 }
 
 // GetStats - возвращает статистику
@@ -302,8 +382,11 @@ func (bc *BaseConsumer) printStatsIfNeeded() {
 		return
 	}
 
-	log.Printf("📈 STATS: processed=%d, dlq=%d",
-		bc.messagesProcessed.Load(), bc.messagesDLQ.Load())
+	bc.logger.Info("Consumer statistics",
+		"processed", bc.messagesProcessed.Load(),
+		"dlq", bc.messagesDLQ.Load(),
+		"pending", bc.currentBatch.Load(),
+	)
 	bc.lastStatsTime = time.Now()
 }
 
