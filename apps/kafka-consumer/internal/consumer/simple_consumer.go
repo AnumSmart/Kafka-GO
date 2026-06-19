@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"kafka_consumer/internal/idempotency"
 
+	"log/slog"
+
 	"pkg/kafka"
 	franzgoconsumer "pkg/kafka/franz-go-consumer"
 
@@ -14,12 +16,14 @@ import (
 // SimpleConsumer - простой consumer с хранилищем сообщений
 type SimpleConsumer struct {
 	baseConsumer kafka.Consumer
+	logger       *slog.Logger
 	messageStore *MessageStore
 	debugEnabled bool
 }
 
 // NewSimpleConsumer - создаёт consumer с хранилищем
 func NewSimpleConsumer(
+	logger *slog.Logger,
 	kafkaClient *kgo.Client,
 	store *MessageStore,
 	idempotencyCache *idempotency.IdempotencyCache,
@@ -28,7 +32,7 @@ func NewSimpleConsumer(
 ) (kafka.Consumer, error) {
 
 	// Создаём обработчик с идемпотентностью
-	handler := NewStoreHandler(store, idempotencyCache)
+	handler := NewStoreHandler(store, idempotencyCache, logger)
 
 	// Включаем debug для хендлера, если нужно
 	if debugEnabled {
@@ -50,6 +54,7 @@ func NewSimpleConsumer(
 		handler,
 		dlqManager,
 		consumerOpts,
+		logger,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("error creating baseConsumer: %w", err)
@@ -57,6 +62,7 @@ func NewSimpleConsumer(
 
 	return &SimpleConsumer{
 		baseConsumer: baseConsumer,
+		logger:       logger,
 		messageStore: store,
 		debugEnabled: debugEnabled,
 	}, nil

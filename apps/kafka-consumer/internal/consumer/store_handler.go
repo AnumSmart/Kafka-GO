@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"kafka_consumer/internal/idempotency"
 
+	"log/slog"
 	"pkg/kafka"
 	"pkg/logger"
 	"time"
@@ -14,16 +15,18 @@ import (
 type StoreHandler struct {
 	store       *MessageStore
 	cache       *idempotency.IdempotencyCache
+	logger      *slog.Logger
 	cachePrefix string
 	cacheTTL    time.Duration
 	debug       bool
 }
 
 // NewStoreHandler – конструктор обработчика
-func NewStoreHandler(store *MessageStore, cache *idempotency.IdempotencyCache) kafka.MessageHandler {
+func NewStoreHandler(store *MessageStore, cache *idempotency.IdempotencyCache, logger *slog.Logger) kafka.MessageHandler {
 	return &StoreHandler{
 		store:       store,
 		cache:       cache,
+		logger:      logger,
 		cachePrefix: "event",
 		cacheTTL:    24 * time.Hour,
 		debug:       false,
@@ -37,11 +40,8 @@ func (h *StoreHandler) SetDebug(debug bool) {
 
 // HandleMessage – реализация интерфейса kafka.MessageHandler с идемпотентностью
 func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) error {
-	// Получаем логгер (синглтон)
-	log := logger.GetLogger()
-
 	// Логируем начало обработки
-	log.InfoContext(ctx, "processing message",
+	h.logger.InfoContext(ctx, "processing message",
 		"topic", msg.Topic,
 		"partition", msg.Partition,
 		"offset", msg.Offset,
@@ -53,7 +53,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	}
 	if err := json.Unmarshal(msg.Value, &envelope); err != nil {
 		if h.debug {
-			log.WarnContext(ctx, "failed to parse EventID from message, skipping idempotency check",
+			h.logger.WarnContext(ctx, "failed to parse EventID from message, skipping idempotency check",
 				"error", err,
 				"topic", msg.Topic,
 				"partition", msg.Partition,
@@ -66,7 +66,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 
 	if envelope.EventID == "" {
 		if h.debug {
-			log.DebugContext(ctx, "message without EventID, skipping idempotency check",
+			h.logger.DebugContext(ctx, "message without EventID, skipping idempotency check",
 				"topic", msg.Topic,
 				"partition", msg.Partition,
 				"offset", msg.Offset,
@@ -80,7 +80,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	exists, err := h.cache.IsProcessed(ctx, envelope.EventID)
 	if err != nil {
 		// Ошибка Redis – fail‑open: сохраняем сообщение, но логируем ошибку
-		log.ErrorContext(ctx, "Redis check failed, saving message anyway (fail-open)",
+		h.logger.ErrorContext(ctx, "Redis check failed, saving message anyway (fail-open)",
 			"event_id", envelope.EventID,
 			"error", err,
 			"topic", msg.Topic,
@@ -92,7 +92,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 
 	if exists {
 		if h.debug {
-			log.DebugContext(ctx, "duplicate event skipped (idempotency)",
+			h.logger.DebugContext(ctx, "duplicate event skipped (idempotency)",
 				"event_id", envelope.EventID,
 				"topic", msg.Topic,
 				"partition", msg.Partition,
@@ -104,7 +104,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 
 	// === Сохранение сообщения ===
 	if err := h.saveMessage(msg); err != nil {
-		log.ErrorContext(ctx, "failed to save message",
+		h.logger.ErrorContext(ctx, "failed to save message",
 			"event_id", envelope.EventID,
 			"error", err,
 			"topic", msg.Topic,
@@ -117,7 +117,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	// === Отметка в Redis как обработанное ===
 	// ✅ Используем правильный метод MarkProcessed
 	if err := h.cache.MarkProcessed(ctx, envelope.EventID); err != nil {
-		log.WarnContext(ctx, "failed to mark event as processed in Redis",
+		h.logger.WarnContext(ctx, "failed to mark event as processed in Redis",
 			"event_id", envelope.EventID,
 			"error", err,
 		)
@@ -126,7 +126,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 	}
 
 	if h.debug {
-		log.DebugContext(ctx, "event processed successfully",
+		h.logger.DebugContext(ctx, "event processed successfully",
 			"event_id", envelope.EventID,
 			"topic", msg.Topic,
 			"partition", msg.Partition,
@@ -134,7 +134,7 @@ func (h *StoreHandler) HandleMessage(ctx context.Context, msg *kafka.Message) er
 		)
 	}
 
-	log.InfoContext(ctx, "message processed successfully",
+	h.logger.InfoContext(ctx, "message processed successfully",
 		"event_id", envelope.EventID,
 		"topic", msg.Topic,
 		"partition", msg.Partition,
