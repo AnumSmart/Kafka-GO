@@ -17,6 +17,7 @@ KAFKAGO/
 │ ├── kafka-consumer/                   # Сервис консьюмера
 │ └── kafka-producer/                   # Сервис продьюссера
 ├── deployments/                        # Docker Compose
+├── global_models/                      # глобальные модели
 │ ├── kafka/                            # Развертывание Kafka
 │ |     ├── .env
 │ |     ├── .env.example
@@ -24,8 +25,11 @@ KAFKAGO/
 ├── pkg/                                # общие библиотеки
 │ ├── configs/                          # логика конфигов
 │ ├── kafka/                            # логика создания kafka.reader и kafka.wtiter
+│ ├── logger/                           # логика создания логгера slog
+│ ├── redis/                            # логика создания кэша (redis)
 │ └── go.mod                            # зависимости для этого пакета
 ├── Makefile
+├── .mockery.yml
 ├── go.work
 ├── .gitignore
 └── README.md

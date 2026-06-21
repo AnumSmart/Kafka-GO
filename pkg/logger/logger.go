@@ -122,7 +122,12 @@ func WithContext(ctx context.Context) *slog.Logger {
 		return logger
 	}
 
-	return logger.WithAttrs(attrs)
+	args := make([]any, len(attrs))
+	for i, a := range attrs {
+		args[i] = a
+	}
+
+	return logger.With(args...)
 }
 
 // WithContextAndLogger - принимает существующий логгер и обогащает его атрибутами из контекста
@@ -138,7 +143,12 @@ func WithContextAndLogger(ctx context.Context, logger *slog.Logger) *slog.Logger
 		return logger
 	}
 
-	return logger.WithAttrs(attrs)
+	args := make([]any, len(attrs))
+	for i, a := range attrs {
+		args[i] = a
+	}
+
+	return logger.With(args...)
 }
 
 // WithContextOrDefault - возвращает логгер с контекстом или указанный fallback логгер
@@ -159,22 +169,12 @@ func WithContextOrDefault(ctx context.Context, fallback *slog.Logger) *slog.Logg
 		return logger
 	}
 
-	return logger.WithAttrs(attrs)
-}
-
-// WithContextAndAttrs - возвращает логгер с атрибутами из контекста и дополнительными атрибутами
-// Всегда возвращает валидный логгер
-func WithContextAndAttrs(ctx context.Context, attrs ...slog.Attr) *slog.Logger {
-	logger := GetLogger() // всегда валидный
-
-	contextAttrs := extractContextAttrs(ctx)
-	if len(contextAttrs) == 0 && len(attrs) == 0 {
-		return logger
+	args := make([]any, len(attrs))
+	for i, a := range attrs {
+		args[i] = a
 	}
 
-	// Объединяем атрибуты из контекста и переданные
-	allAttrs := append(contextAttrs, attrs...)
-	return logger.WithAttrs(allAttrs)
+	return logger.With(args...)
 }
 
 // ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
