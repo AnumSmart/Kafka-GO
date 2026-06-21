@@ -1,4 +1,16 @@
-# .mockery.yaml
 with-expecter: true
-srcpkg: 'C:\\Users\\aliaksei.makarevich\\go\\KAFKA\\KafkaGo\\pkg\\kafka'
-all: true
+resolve-type-alias: false # будет по умолчанию false в v3
+disable-version-string: true # будет по умолчанию true в v3
+issue-845-fix: true # требуется явно установить
+
+packages:
+  pkg/kafka:
+    config:
+      all: true
+      dir: pkg/kafka/mocks
+      outpkg: kafka
+  pkg/kafka/franz-go-consumer:
+    config:
+      all: true
+      dir: pkg/kafka/franz-go-consumer/mocks
+      outpkg: franzgo
