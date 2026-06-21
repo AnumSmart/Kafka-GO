@@ -19,8 +19,16 @@
 │ |     ├── tools.go                        # вспомогательные функции
 │ |     └── server_config.go                # конфиг для http сервера
 │ ├── kafka/                                # логика для кафки
-│ |     ├── consumer.go                     # логика базового консьюмера (библиотека franz-go)
-│ |     └── producer.go                     # создаём kafka writer (библиотека kafka-go, segmentio)
+│ |     ├── franz-go-consumer/              # логика базового консьюмера (библиотека franz-go)
+│ |     ├── franz-go-producer/              # логика базового продьюссера (библиотека franz-go)
+│ |     ├── kafka-go-segm-producer/         # создаём kafka writer (библиотека kafka-go, segmentio)
+│ |     |       └── producer.go             # логика продьюссера
+│ |     ├── errors.go                       # общие ошибки для пакета kafka
+│ |     ├── interfaces.go                   # общие интерфейсы для пакета kafka
+│ |     └── models.go                       # общие модели для пакета kafka
+│ ├── logger/                               # логика создания логгера slog
+│ |     ├── logger_config.go                # логика создания конфига для slog
+│ |     └── logger.go                       # логика slog
 │ ├── redis/                                # логика создания экземпляра редис
 │ |     ├── cache_redis_adapter.go          # адаптер для соответствия глобальному интерфейсу
 │ |     └── redis.go                        # создаём репозиторий для редиса
