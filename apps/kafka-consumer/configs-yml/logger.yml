@@ -1,4 +1,4 @@
 level: info
-format: json
+format: text
 add_source: true
 service: kafka-consumer
