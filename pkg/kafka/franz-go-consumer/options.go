@@ -16,6 +16,12 @@ type ConsumerOptions struct {
 	// EnableDebugLog - включить отладочное логирование
 	// По умолчанию: false
 	EnableDebugLog bool
+
+	// ShutdownTimeout - таймаут ожидания завершения обработки
+	ShutdownTimeout time.Duration
+
+	// максимальный размер батча
+	MaxBatchSize int64
 }
 
 // DefaultOptions - настройки по умолчанию
@@ -24,6 +30,8 @@ func DefaultOptions() *ConsumerOptions {
 		StatsPrintInterval: 10 * time.Second,
 		CommitInterval:     0, // ручной коммит
 		EnableDebugLog:     false,
+		ShutdownTimeout:    25 * time.Second,
+		MaxBatchSize:       1000,
 	}
 }
 
