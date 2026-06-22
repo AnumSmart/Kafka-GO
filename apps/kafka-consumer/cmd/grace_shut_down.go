@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"kafka_consumer/internal/deps"
+	"log/slog"
 
-	"log"
 	"os"
 	"os/signal"
 	"pkg/kafka"
@@ -16,7 +16,7 @@ import (
 const GracefulShutdownTimeout = 30 * time.Second
 
 // waitForShutdown ожидает сигнал завершения или ошибку consumer
-func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error) {
+func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error, logger *slog.Logger) {
 	// Настраиваем канал для системных сигналов
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan,
@@ -29,18 +29,17 @@ func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error)
 	// Блокируем main, ожидая сигнал или ошибку
 	select {
 	case sig := <-sigChan:
-		log.Printf("📡 Received signal: %s", sig)
+		logger.Info("Received signal", "signal", sig.String())
 		// Для SIGQUIT делаем принудительное завершение без graceful
 		if sig == syscall.SIGQUIT {
-			log.Println("⚠️  SIGQUIT received, forcing immediate shutdown")
+			logger.Warn("SIGQUIT received, forcing immediate shutdown")
 			return
 		}
 
-		log.Println("🛑 Initiating graceful shutdown...")
+		logger.Info("Initiating graceful shutdown...")
 
 	case err := <-consumerErrors:
-		log.Printf("❌ Consumer error: %v", err)
-		log.Println("🛑 Initiating shutdown due to error...")
+		logger.Error("Consumer error, initiating shutdown", "error", err)
 	}
 
 	// Выполняем graceful shutdown
@@ -48,8 +47,8 @@ func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error)
 }
 
 // performGracefulShutdown выполняет корректное завершение работы consumer
-func performGracefulShutdown(simpleConsumer kafka.Consumer) {
-	log.Println("⏳ Waiting for current batch processing to complete...")
+func performGracefulShutdown(simpleConsumer kafka.Consumer, logger *slog.Logger) {
+	logger.Info("⏳ Waiting for current batch processing to complete...")
 
 	// Создаем контекст с таймаутом для graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), GracefulShutdownTimeout)
@@ -60,36 +59,35 @@ func performGracefulShutdown(simpleConsumer kafka.Consumer) {
 
 	// Запускаем shutdown в горутине
 	go func() {
-		log.Println("  → Stopping consumer gracefully...")
+		logger.Info("  → Stopping consumer gracefully...")
 
 		// Вызываем graceful shutdown consumer
 		simpleConsumer.Shutdown()
 
-		log.Println("  ✓ Consumer stopped gracefully")
+		logger.Info("  ✓ Consumer stopped gracefully")
 		close(done)
 	}()
 
 	// Ожидаем завершения или таймаута
 	select {
 	case <-done:
-		log.Println("✅ Graceful shutdown completed successfully")
+		logger.Info("✅ Graceful shutdown completed successfully")
 
 	case <-shutdownCtx.Done():
-		log.Println("⚠️  Graceful shutdown timeout exceeded")
-		log.Println("  → Forcing immediate shutdown...")
+		logger.Warn("Graceful shutdown timeout exceeded, forcing immediate shutdown...")
 
 		// При таймауте принудительно закрываем клиент
 		if simpleConsumer != nil {
 			// Close клиента уже вызывается в Shutdown, но на всякий случай
-			log.Println("  → Force closing Kafka client...")
+			logger.Info("Force closing Kafka client...")
 		}
-		log.Println("  ✓ Consumer forcibly stopped")
+		logger.Info("  ✓ Consumer forcibly stopped")
 	}
 }
 
 // gracefulShutdownResources закрывает ресурсы контейнера (вызывается через defer)
-func gracefulShutdownResources(container *deps.Container) {
-	log.Println("🧹 Cleaning up resources...")
+func gracefulShutdownResources(container *deps.Container, logger *slog.Logger) {
+	logger.Info("🧹 Cleaning up resources...")
 
 	// Создаем контекст с таймаутом для закрытия ресурсов
 	closeCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -99,12 +97,12 @@ func gracefulShutdownResources(container *deps.Container) {
 	done := make(chan struct{})
 
 	go func() {
-		log.Println("  → Closing Kafka client connections...")
+		logger.Info("  → Closing Kafka client connections...")
 
 		if err := container.Close(); err != nil {
-			log.Printf("  ⚠️  Error closing container: %v", err)
+			logger.Warn("Error closing container", "error", err)
 		} else {
-			log.Println("  ✓ All resources closed successfully")
+			logger.Info("All resources closed successfully")
 		}
 
 		close(done)
@@ -113,8 +111,8 @@ func gracefulShutdownResources(container *deps.Container) {
 	// Ожидаем закрытия или таймаута
 	select {
 	case <-done:
-		log.Println("✅ Cleanup completed")
+		logger.Info("✅ Cleanup completed")
 	case <-closeCtx.Done():
-		log.Println("⚠️  Cleanup timeout exceeded, some resources may not be closed")
+		logger.Warn("Cleanup timeout exceeded, some resources may not be closed")
 	}
 }
