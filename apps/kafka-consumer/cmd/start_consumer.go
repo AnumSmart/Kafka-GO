@@ -2,25 +2,25 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"pkg/kafka"
 )
 
 // startConsumer запускает consumer и возвращает канал ошибок
-func startConsumer(ctx context.Context, simpleConsumer kafka.Consumer) <-chan error {
+func startConsumer(ctx context.Context, simpleConsumer kafka.Consumer, logger *slog.Logger) <-chan error {
 	errorChan := make(chan error, 1)
 
 	go func() {
-		log.Println("🎧 Starting Kafka consumer...")
+		logger.Info("Starting Kafka consumer...")
 
 		// Запускаем основной цикл потребления
 		if err := simpleConsumer.Start(ctx); err != nil {
-			log.Printf("❌ Consumer error: %v", err)
+			logger.Error("Consumer error", "error", err)
 			errorChan <- err
 		}
 
 		close(errorChan)
-		log.Println("✅ Consumer finished")
+		logger.Info("Consumer finished")
 	}()
 
 	return errorChan
