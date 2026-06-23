@@ -43,7 +43,7 @@ func waitForShutdown(simpleConsumer kafka.Consumer, consumerErrors <-chan error,
 	}
 
 	// Выполняем graceful shutdown
-	performGracefulShutdown(simpleConsumer)
+	performGracefulShutdown(simpleConsumer, logger)
 }
 
 // performGracefulShutdown выполняет корректное завершение работы consumer
