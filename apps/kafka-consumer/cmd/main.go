@@ -52,10 +52,10 @@ func main() {
 	logger.Info("Consumer ready")
 
 	// 4. Запуск consumer (получаем канал ошибок)
-	consumerErrors := startConsumer(ctx, simpleConsumer)
+	consumerErrors := startConsumer(ctx, simpleConsumer, logger)
 
 	// 5. Ожидание сигнала завершения
-	waitForShutdown(simpleConsumer, consumerErrors)
+	waitForShutdown(simpleConsumer, consumerErrors, logger)
 
 	logger.Info("👋 Kafka Consumer Service stopped")
 }
