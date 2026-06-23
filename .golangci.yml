@@ -1,0 +1,34 @@
+# Версия конфигурации (сейчас актуальна 2-я)
+version: '2'
+
+# Настройка линтеров
+linters:
+  default: all # Включить все линтеры. По умолчанию: standard
+  enable: # Можно явно включить нужные
+    - errcheck # Проверяет, что ошибки обрабатываются
+    - govet # Официальный анализатор Go
+    - staticcheck # Глубокий статический анализ
+    - revive # Современная замена golint
+    - gosec # Проверка безопасности
+    - misspell # Проверка орфографии
+  settings: # Настройки конкретных линтеров
+    errcheck:
+      check-type-assertions: true
+    revive:
+      severity: warning
+  exclusions: # Исключения
+    generated: lax # Как обрабатывать сгенерированный код
+    rules: # Правила исключений
+      - path: _test\.go
+        linters:
+          - gocyclo
+          - errcheck
+
+# Настройки запуска
+run:
+  timeout: 5m # Таймаут
+  tests: true # Проверять и тесты
+
+# Настройки вывода
+output:
+  print-issued-lines: true
